@@ -24,7 +24,13 @@ def mouse_select(event, x, y, flags, param):
         y2 = y
 
 
-def selectROI(image):
+def selectROI(image, ratio=None):
+    if ratio:
+        a, b, _ = image.shape
+        y1, y2 = round(a*ratio[0]), round(a*ratio[1])
+        x1, x2 = round(b*ratio[2]), round(b*ratio[3])
+        return image[y1:y2, x1:x2, :]
+
     global x1, x2, y1, y2
     cv2.imshow('ROI Selector', image)
     cv2.setMouseCallback('ROI Selector', mouse_select)
@@ -37,12 +43,22 @@ def selectROI(image):
         cv2.imshow('ROI Selector', img)
         if (cv2.waitKey(200) & 0xFF) == 27:
             break
-    print("img[%s:%s, %s:%s]"%(y1, y2, x1, x2))
-    print("width=%s(%s), height=%s(%s)"%(x2-x1, (x2-x1)/8, y2-y1, (y2-y1)/8))
+    axis0 = round((x2-x1)/8)*8
+    axis1 = round((y2-y1)/8)*8
+    y1 = round((y1+y2)/2 - axis0/2)
+    y2 = round((y1+y2)/2 + axis0/2)
+    x1 = round((x1+x2)/2 - axis1/2)
+    x2 = round((x1+x2)/2 + axis1/2)
+    print("[ROI] img.shape = (%s, %s, %s)" % image.shape)
+    print("[ROI] roi = img[%s:%s, %s:%s, :]"%(y1, y2, x1, x2))
+    print("[ROI] width=%s(%s), height=%s(%s)"%(x2-x1, (x2-x1)/8, y2-y1, (y2-y1)/8))
     cv2.imshow('ROI Selector', image[y1:y2, x1:x2])
-    print("Y=(%.4f, %.4f), X=(%.4f, %.4f)" % (y1/image.shape[0], y2/image.shape[0],x1/image.shape[1],x2/image.shape[1]))
+    print("[ROI] Y=(%.4f, %.4f), X=(%.4f, %.4f)" % (y1/image.shape[0], y2/image.shape[0],x1/image.shape[1],x2/image.shape[1]))
 
     cv2.waitKey()
+    if (y2-y1)*(x2-x1) == 0:
+        print("[WARNING] selectROI returns empty image. ignore it.")
+        return image
     return image[y1:y2, x1:x2, :]
 
 ## From Picture
@@ -89,8 +105,8 @@ while(1):
         print("Error! sleep for 3 seconds")
         time.sleep(3)
         continue
-    result = selectROI(img)
-    result = np.array(img[74:738, 342:998], copy=True)
+    result = selectROI(img, ratio=(0.1175, 0.9088, 0.3305, 0.9572))
+    # result = np.array(img[74:738, 342:998], copy=True)
 
     # predict via conv net
     if False:
@@ -103,7 +119,7 @@ while(1):
     cv2.putText(result, '%s ms' % duration, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 3)
     cv2.imshow('ROI', result)
     te = time.time()
-    if (tick>0 and tick%200==0) or cv2.waitKey(10) & 0xFF == ord(' '):
+    if (tick>0 and tick%2000==0) or cv2.waitKey(10) & 0xFF == ord(' '):
         print('Learning mode!')
         tag = Tagging(img[74:738, 342:998])
         tag.tag()
