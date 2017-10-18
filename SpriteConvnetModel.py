@@ -186,13 +186,20 @@ class SpriteConvnetModel:
             saver = tf.train.Saver()
             global_step = [var for var in tf.global_variables() if var.op.name=="global_step"][0]
 
-            for t in range(100):
-
+            #a, b = tf.train.shuffle_batch([features, labels], batch_size=64,
+            #                              capacity=64000, min_after_dequeue=10240, enqueue_many=True)
+            x = 0
+            for t in range(600):
+                if (x+1)*64 > labels.shape[0]:
+                    x = 0
+                a = features[x*64: (x+1)*64]
+                b = labels[x*64: (x+1)*64]
                 _, lr = sess.run([self.train_op, self.learning_rate], feed_dict={
-                    self.x_input: features,
-                    self.y_label: labels
+                    self.x_input: a,
+                    self.y_label: b
                 })
-                print(t)
+                print(t, x)
+                x+=1
 
             saver.save(sess, self.config.checkpointDir + 'model.ckpt', global_step=global_step)
 
@@ -442,9 +449,11 @@ def main():
         for _ in range(10):
             yield train_data
 
+    from img_utils import collect_sprite_training_data
+    features, labels = collect_sprite_training_data(root + "img_data")
     model = SpriteConvnetModel(FLAGS, False, True)
     model.train_prepare(restore_model=False)
-    model.train(train_data, train_labels)
+    model.train(features, labels)
 
     model2= SpriteConvnetModel(FLAGS, False, False)
     gen2 = model2.predictor(gen_repeat())

@@ -109,12 +109,12 @@ for roi_img in roi_img_generator:
 
     predictions = gen2.__next__()
     print(predictions)
-    result = Tagging.attach(roi_img, predictions)
+    result = Tagging.attach(roi_img.copy(), predictions)
 
     print("Tagging finished.")
 
     cv2.putText(result, '%s ms' % duration, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 3)
-    cv2.imshow('ROI', result)
+    cv2.imshow('Sprites', result)
     if (tick > 0 and tick % 2000 == 0) or cv2.waitKey(10) & 0xFF == ord(' '):
         print('Learning mode!')
         tag = Tagging(roi_img)
