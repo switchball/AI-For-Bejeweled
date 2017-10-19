@@ -31,8 +31,9 @@ def selectROI(image, ratio=None, round8=True):
     global x1, x2, y1, y2
     if ratio:
         a, b, _ = image.shape
-        y1, y2 = round(a*ratio[0]), round(a*ratio[1])
-        x1, x2 = round(b*ratio[2]), round(b*ratio[3])
+        y1, y2 = round(a*ratio[1]), round(a*ratio[3])
+        x1, x2 = round(b*ratio[0]), round(b*ratio[2])
+
         return image[y1:y2, x1:x2, :]
 
     cv2.imshow('ROI Selector', image)
@@ -66,7 +67,8 @@ def selectROI(image, ratio=None, round8=True):
     return image[y1:y2, x1:x2, :]
 
 
-def gen_roi_image():
+from BejeweledEnvironment import *
+def gen_roi_image(env):
     ## From ImageGrab
     score = 0
     tick = 0
@@ -74,39 +76,41 @@ def gen_roi_image():
 
     while(1):
         tick+=1
-        img = grabScreen(hwnd, delay=0.01, forceFront=(tick<10))
+        img = env.grabScreen(delay=0.01, forceFront=(tick<10))
+        # img = grabScreen(hwnd, delay=0.01, forceFront=(tick<10))
         if img is not None:
             pass
         else:
             print("Error! sleep for 3 seconds")
             time.sleep(3)
             continue
-        result = selectROI(img, ratio=(0.1175, 0.9088, 0.3305, 0.9572))
+        result = selectROI(img, ratio=(0.3305, 0.1175, 0.9572, 0.9088))
 
         # 临时测试代码开始
 
-        import pyocr
-        import pyocr.tesseract as tess
-        import pyocr.builders
-        from PIL import Image
+        if True:
+            import pyocr
+            import pyocr.tesseract as tess
+            import pyocr.builders
+            from PIL import Image
 
-        digit_ratio = (0.1870, 0.2195, 0.1016, 0.2228)
-        digits = selectROI(img, ratio=digit_ratio, round8=False)
-        bw_img = digits
-        # (thresh, bw_img) = cv2.threshold(digits, 128, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-        cv2.imwrite('digit_sample.jpg', bw_img)
-        txt = tess.image_to_string(
-            Image.fromarray(bw_img),
-            lang='eng',
-            builder=pyocr.builders.TextBuilder()
-        )
-        txt = txt.replace(',','').replace('.','')
-        last_score = score
-        if txt.isdigit():
-            score = int(txt)
-        else:
-            score = last_score
-        print(score, ' +', score - last_score)
+            digit_ratio = (0.1016, 0.1870, 0.2228, 0.2195)
+            digits = selectROI(img, ratio=digit_ratio, round8=False)
+            bw_img = digits
+            # (thresh, bw_img) = cv2.threshold(digits, 128, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+            cv2.imwrite('digit_sample.jpg', bw_img)
+            txt = tess.image_to_string(
+                Image.fromarray(bw_img),
+                lang='eng',
+                builder=pyocr.builders.TextBuilder()
+            )
+            txt = txt.replace(',','').replace('.','')
+            last_score = score
+            if txt.isdigit():
+                score = int(txt)
+            else:
+                score = last_score
+            print(score, ' +', score - last_score)
 
         # 临时测试代码结束
 
@@ -122,7 +126,11 @@ def gen_image_features(gen_IMG):
         yield img_crop_to_array(image_roi)
 
 from itertools import *
-roi_img_generator = gen_roi_image()
+
+env = BejeweledEnvironment(ratio=1.25)
+act = BejeweledAction()
+
+roi_img_generator = gen_roi_image(env)
 model = SpriteConvnetModel(tf_flags(), False, True)
 gen2 = model.predictor(gen_image_features(roi_img_generator))
 #gen2 = model.predictor(starmap(img_crop_to_array, roi_img_generator))
@@ -131,18 +139,28 @@ tick = 0
 te, ts = 0, 0
 for roi_img in roi_img_generator:
     te = time.time()
-    print('='*20)
     duration = int((te - ts) * 1000)
-    print(tick, duration, 'ms!')
+    print(tick, duration, 'ms! ', )
     ts = time.time()
     tick += 1
 
-    predictions = gen2.__next__()
+    predictions = next(gen2)
     result = Tagging.attach(roi_img.copy(), predictions)
 
     cv2.putText(result, '%s ms' % duration, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 3)
     cv2.imshow('Sprites', result)
-    if (tick > 0 and tick % 2000 == 0) or cv2.waitKey(10) & 0xFF == ord(' '):
+    cv2.moveWindow('Sprites', 0, 0)
+    cv2.waitKey(1)
+
+    if np.count_nonzero(predictions==0) > 40:
+        print("No detection, sleep for 3 seconds.")
+        time.sleep(3)
+    else:
+        if tick >= 20 and tick % 1 == 0:
+            action = act.random_action()
+            env.step(action)
+
+    if (tick > 0 and tick % 200000 == 0) or cv2.waitKey(10) & 0xFF == ord(' '):
         print('Learning mode!')
         tag = Tagging(roi_img)
         tag.tag()
