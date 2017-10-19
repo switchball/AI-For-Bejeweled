@@ -27,7 +27,7 @@ def mouse_select(event, x, y, flags, param):
         y2 = y
 
 
-def selectROI(image, ratio=None):
+def selectROI(image, ratio=None, round8=True):
     global x1, x2, y1, y2
     if ratio:
         a, b, _ = image.shape
@@ -46,12 +46,13 @@ def selectROI(image, ratio=None):
         cv2.imshow('ROI Selector', img)
         if (cv2.waitKey(200) & 0xFF) == 27:
             break
-    axis0 = round((x2-x1)/8)*8
-    axis1 = round((y2-y1)/8)*8
-    y1 = round((y1+y2)/2 - axis0/2)
-    y2 = round((y1+y2)/2 + axis0/2)
-    x1 = round((x1+x2)/2 - axis1/2)
-    x2 = round((x1+x2)/2 + axis1/2)
+    if round8:
+        axis0 = round((x2-x1)/8)*8
+        axis1 = round((y2-y1)/8)*8
+        y1 = round((y1+y2)/2 - axis0/2)
+        y2 = round((y1+y2)/2 + axis0/2)
+        x1 = round((x1+x2)/2 - axis1/2)
+        x2 = round((x1+x2)/2 + axis1/2)
     print("[ROI] img.shape = (%s, %s, %s)" % image.shape)
     print("[ROI] roi = img[%s:%s, %s:%s, :]"%(y1, y2, x1, x2))
     print("[ROI] width=%s(%s), height=%s(%s)"%(x2-x1, (x2-x1)/8, y2-y1, (y2-y1)/8))
@@ -67,6 +68,7 @@ def selectROI(image, ratio=None):
 
 def gen_roi_image():
     ## From ImageGrab
+    score = 0
     tick = 0
     hwnd = getHwnd("Bejeweled 3", "MainWindow")
 
@@ -80,6 +82,33 @@ def gen_roi_image():
             time.sleep(3)
             continue
         result = selectROI(img, ratio=(0.1175, 0.9088, 0.3305, 0.9572))
+
+        # 临时测试代码开始
+
+        import pyocr
+        import pyocr.tesseract as tess
+        import pyocr.builders
+        from PIL import Image
+
+        digit_ratio = (0.1870, 0.2195, 0.1016, 0.2228)
+        digits = selectROI(img, ratio=digit_ratio, round8=False)
+        bw_img = digits
+        # (thresh, bw_img) = cv2.threshold(digits, 128, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        cv2.imwrite('digit_sample.jpg', bw_img)
+        txt = tess.image_to_string(
+            Image.fromarray(bw_img),
+            lang='eng',
+            builder=pyocr.builders.TextBuilder()
+        )
+        txt = txt.replace(',','').replace('.','')
+        last_score = score
+        if txt.isdigit():
+            score = int(txt)
+        else:
+            score = last_score
+        print(score, ' +', score - last_score)
+
+        # 临时测试代码结束
 
         # it is the double yield trick, not bug
         yield result
@@ -108,10 +137,7 @@ for roi_img in roi_img_generator:
     tick += 1
 
     predictions = gen2.__next__()
-    print(predictions)
     result = Tagging.attach(roi_img.copy(), predictions)
-
-    print("Tagging finished.")
 
     cv2.putText(result, '%s ms' % duration, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 3)
     cv2.imshow('Sprites', result)
