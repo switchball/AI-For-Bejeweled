@@ -35,6 +35,7 @@ def interpolate(a, b, t):
 class BejeweledAction():
     def __init__(self):
         self.action_space = list(product([0,1,2,3,4,5,6,7], [0,1,2,3,4,5,6], ['H','V']))
+        self.action_space = self.action_space + [('0', '0', 'W')]
 
     def random_action(self):
         return self.action_space[np.random.randint(len(self.action_space))]
@@ -75,19 +76,26 @@ class BejeweledEnvironment(Environment):
 
     def step(self, action, wait=0):
         a, b, c = action
+        row1, row2, col1, col2 = 0, 0, 0, 0
+        w = False
         if c == 'H':
             row1, row2 = a, a
             col1, col2 = b, b+1
         elif c == 'V':
             col1, col2 = a, a
             row1, row2 = b, b+1
+        elif c == 'W':
+            w = True
         else:
             print("Invalid Action!")
             return None
         print("Step Action:", action)
-        self.mouse_click_on_sprite(row1, col1)
-        time.sleep(0.05)
-        self.mouse_click_on_sprite(row2, col2)
+        if not w:
+            self.mouse_click_on_sprite(row1, col1)
+            time.sleep(0.05)
+            self.mouse_click_on_sprite(row2, col2)
+        else:
+            time.sleep(1.5)
         time.sleep(wait)
         # capture next state after wait
         predictions, digits = next(self.state_iterator)
