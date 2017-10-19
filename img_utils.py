@@ -46,7 +46,8 @@ def collect_sprite_training_data(path = "./img_data/"):
             img_file = cv2.imread(path + prefix + "-data.jpg")
             np_image_data = np.asarray(img_file)
             np_image_data = cv2.normalize(np_image_data.astype('float'), None, 0.0, 1.0, cv2.NORM_MINMAX)
-            img_array = np_image_data.reshape((64, 32, 32, 3))
+            size = int(np_image_data.shape[0] / 32) # normally, it should be 64
+            img_array = np_image_data.reshape((size, 32, 32, 3))
             img_label = np.load(path + prefix + '-label.npy')
             # concatenate
             ret_images = np.concatenate((ret_images, img_array), axis=0)

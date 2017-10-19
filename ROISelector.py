@@ -121,10 +121,11 @@ def gen_image_features(gen_IMG):
     for image_roi in gen_IMG:
         yield img_crop_to_array(image_roi)
 
-
+from itertools import *
 roi_img_generator = gen_roi_image()
 model = SpriteConvnetModel(tf_flags(), False, True)
 gen2 = model.predictor(gen_image_features(roi_img_generator))
+#gen2 = model.predictor(starmap(img_crop_to_array, roi_img_generator))
 
 tick = 0
 te, ts = 0, 0

@@ -192,6 +192,11 @@ class SpriteConvnetModel:
             for t in range(600):
                 if (x+1)*64 > labels.shape[0]:
                     x = 0
+                if x == 0:
+                    rng_state = np.random.get_state()
+                    np.random.shuffle(features)
+                    np.random.set_state(rng_state)
+                    np.random.shuffle(labels)
                 a = features[x*64: (x+1)*64]
                 b = labels[x*64: (x+1)*64]
                 _, lr = sess.run([self.train_op, self.learning_rate], feed_dict={
