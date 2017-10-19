@@ -51,7 +51,7 @@ class BejeweledEnvironment(Environment):
         self.get_hwnd("Bejeweled 3", "MainWindow")
         self.screen_size = self.get_screen_resolution()
         self.force_front_flag = True
-        self.recognize_digit = False
+        self.recognize_digit = True
 
         # generator flow
         gen1, gen2 = tee(self.gen_screen_image(), 2)
@@ -67,6 +67,7 @@ class BejeweledEnvironment(Environment):
         # state store
         self.last_image = None
         self.last_state = None
+        self.last_digit = 0
 
         # others
         self.render_timestamp = time.time()
@@ -89,7 +90,6 @@ class BejeweledEnvironment(Environment):
         else:
             print("Invalid Action!")
             return None
-        print("Step Action:", action)
         if not w:
             self.mouse_click_on_sprite(row1, col1)
             time.sleep(0.05)
@@ -98,8 +98,13 @@ class BejeweledEnvironment(Environment):
             time.sleep(1.5)
         time.sleep(wait)
         # capture next state after wait
+        cached_digits = self.last_digit
         predictions, digits = next(self.state_iterator)
-        return predictions, digits
+        reward = 0
+        if cached_digits:
+            reward = self.last_digit - cached_digits
+        print("Step Action:", action, ", Reward:", reward)
+        return predictions, reward
 
     def render(self):
         duration = int(1000*(time.time() - self.render_timestamp))
@@ -123,6 +128,7 @@ class BejeweledEnvironment(Environment):
             predictions = next(self.prediction_iterator) #.__next__()
             digits = self.digit_iterator.__next__()
             self.last_state = predictions
+            self.last_digit = digits
             yield predictions, digits
 
     def gen_screen_image(self):
@@ -131,7 +137,7 @@ class BejeweledEnvironment(Environment):
             ts = time.time()
             img = self.grab_screen(delay=0.01, force_front=self.force_front_flag)
             d = int((time.time() - ts) * 1000)
-            print("Grab time:", d, 'ms.')
+            # print("Grab time:", d, 'ms.')
             yield img
         # if img is None, should stop iteration
 
@@ -142,14 +148,13 @@ class BejeweledEnvironment(Environment):
             self.last_image = img
             data = img_crop_to_array(img)
             d = int((time.time() - ts) * 1000)
-            print("Predict time:", d, 'ms.')
+            # print("Predict time:", d, 'ms.')
             yield data
 
     def gen_digit(self, image_iterator):
         score = 0
         for image in image_iterator:
             if self.recognize_digit:
-                import tesseract as tess
                 import pyocr
                 import pyocr.tesseract as tess
                 import pyocr.builders
@@ -170,6 +175,8 @@ class BejeweledEnvironment(Environment):
                     score = int(txt)
                 else:
                     score = last_score
+                # scale score
+                score = score / 100
                 yield score
             else:
                 yield 0

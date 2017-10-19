@@ -96,7 +96,6 @@ def new_main():
             tag = Tagging(env.last_image)
             tag.tag()
 
-        print(tick)
 
 if __name__ == '__main__':
     new_main()
