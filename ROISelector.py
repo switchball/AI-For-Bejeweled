@@ -83,11 +83,11 @@ def new_main():
 
         if tick >= 20 and tick % 1 == 0:
             action = act.random_action()
-            predictions, digits = env.step(action)
+            predictions, digits, _ = env.step(action)
 
         env.render()
 
-        if np.count_nonzero(predictions == 0) > 40:
+        if np.count_nonzero(predictions.prediction == 0) > 40:
             print("No detection, sleep for 3 seconds.")
             time.sleep(3)
 
@@ -96,6 +96,11 @@ def new_main():
             tag = Tagging(env.last_image)
             tag.tag()
 
+def interactive():
+    env = BejeweledEnvironment()
+    while True:
+        print(env.get_cursor_ratio())
+        time.sleep(0.5)
 
 if __name__ == '__main__':
-    new_main()
+    interactive()

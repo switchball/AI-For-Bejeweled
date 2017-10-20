@@ -32,6 +32,18 @@ def interpolate(a, b, t):
     return a + (b-a) * t
 
 
+class BejeweledState():
+    TYPE_NUM = 9
+    def __init__(self, predictions):
+        self.prediction = predictions
+        assert len(predictions) == 64
+        self.state = self.prediction_to_state_one_hot(predictions)
+
+    @staticmethod
+    def prediction_to_state_one_hot(prediction):
+        return np.eye(BejeweledState.TYPE_NUM)[prediction].reshape(8,8,-1)
+
+
 class BejeweledAction():
     def __init__(self):
         self.action_space = list(product([0,1,2,3,4,5,6,7], [0,1,2,3,4,5,6], ['H','V']))
@@ -52,6 +64,7 @@ class BejeweledEnvironment(Environment):
         self.screen_size = self.get_screen_resolution()
         self.force_front_flag = True
         self.recognize_digit = True
+        self.action_space = BejeweledAction().action_space
 
         # generator flow
         gen1, gen2 = tee(self.gen_screen_image(), 2)
@@ -75,7 +88,26 @@ class BejeweledEnvironment(Environment):
     def get_initial_state(self):
         return next(self.state_iterator)
 
+    def reset(self):
+        self.last_image = None
+        self.last_state = None
+        self.last_digit = 0
+
+        self.mouse_click_on_screen(self.game_ratio_to_screen_point((0.16, 0.88)))
+        time.sleep(1)
+        self.mouse_click_on_screen(self.game_ratio_to_screen_point((0.54, 0.76)))
+        time.sleep(2)
+        self.mouse_click_on_screen(self.game_ratio_to_screen_point((0.20, 0.28)))
+        time.sleep(1)
+        self.mouse_click_on_screen(self.game_ratio_to_screen_point((0.60, 0.44)))
+        time.sleep(3)
+
+        # do reset step
+        return self.get_initial_state()
+
     def step(self, action, wait=0):
+        if type(action) != BejeweledAction:
+            action = self.action_space[action]
         a, b, c = action
         row1, row2, col1, col2 = 0, 0, 0, 0
         w = False
@@ -103,12 +135,12 @@ class BejeweledEnvironment(Environment):
         reward = 0
         if cached_digits:
             reward = self.last_digit - cached_digits
-        print("Step Action:", action, ", Reward:", reward)
-        return predictions, reward
+        # print("Step Action: {}, Reward: {} ({} -> {})".format(action, reward, cached_digits, self.last_digit) )
+        return predictions, reward, False
 
     def render(self):
         duration = int(1000*(time.time() - self.render_timestamp))
-        result = Tagging.attach(self.last_image.copy(), self.last_state)
+        result = Tagging.attach(self.last_image.copy(), self.last_state.prediction)
 
         cv2.putText(result, '%s ms' % duration, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 3)
         cv2.imshow('Sprites', result)
@@ -125,8 +157,9 @@ class BejeweledEnvironment(Environment):
         self.prediction_iterator.send(None)
         self.digit_iterator.send(None)
         while True:
-            predictions = next(self.prediction_iterator) #.__next__()
+            predictions = next(self.prediction_iterator)
             digits = self.digit_iterator.__next__()
+            predictions = BejeweledState(predictions) # Package the predictions
             self.last_state = predictions
             self.last_digit = digits
             yield predictions, digits
@@ -171,12 +204,12 @@ class BejeweledEnvironment(Environment):
                 )
                 txt = txt.replace(',','').replace('.','')
                 last_score = score
-                if txt.isdigit():
+                if txt.isdigit() and int(txt) >= last_score: # reward should not decrease
                     score = int(txt)
                 else:
                     score = last_score
                 # scale score
-                score = score / 100
+                score = score / 1
                 yield score
             else:
                 yield 0
@@ -230,8 +263,8 @@ class BejeweledEnvironment(Environment):
         return p1, p2
 
     def mouse_click_on_sprite(self, row, col):
-        r1 = interpolate(self.SPRITE_RATIO[0], self.SPRITE_RATIO[2], (row+0.5)/8)
-        r2 = interpolate(self.SPRITE_RATIO[1], self.SPRITE_RATIO[3], (col+0.5)/8)
+        r1 = interpolate(self.SPRITE_RATIO[0], self.SPRITE_RATIO[2], (col+0.5)/8)
+        r2 = interpolate(self.SPRITE_RATIO[1], self.SPRITE_RATIO[3], (row+0.5)/8)
         pos = self.game_ratio_to_screen_point((r1, r2))
         self.mouse_click_on_screen(pos)
 
