@@ -69,10 +69,10 @@ class Tagging:
                 color = (255, 255, 255) if pred == 7 else color
                 color = (56, 200, 184) if pred == 8 else color
                 color = (color[2], color[1], color[0])
-                cv2.circle(image, center, radius, color, thickness=4)
+                cv2.circle(image, center, radius, color, thickness=2)
             else:
                 pass
-            cv2.putText(image, '%s' % pred, (20+x * step_w, 30 + y * step_h), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+            cv2.putText(image, '%s' % pred, (22+x * step_w, 42 + y * step_h), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
         return image
 
     def start(self):

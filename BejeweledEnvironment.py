@@ -47,7 +47,7 @@ class BejeweledState():
 class BejeweledAction():
     def __init__(self):
         self.action_space = list(product([0,1,2,3,4,5,6,7], [0,1,2,3,4,5,6], ['H','V']))
-        self.action_space = self.action_space + [('0', '0', 'W')]
+        self.action_space = self.action_space + [(0, 0, 'W')]
 
     def random_action(self):
         return self.action_space[np.random.randint(len(self.action_space))]
@@ -80,7 +80,7 @@ class BejeweledEnvironment(Environment):
         # state store
         self.last_image = None
         self.last_state = None
-        self.last_digit = 0
+        self.last_score = 0
 
         # others
         self.render_timestamp = time.time()
@@ -91,19 +91,25 @@ class BejeweledEnvironment(Environment):
     def reset(self):
         self.last_image = None
         self.last_state = None
-        self.last_digit = 0
+        self.last_score = 0
 
         self.mouse_click_on_screen(self.game_ratio_to_screen_point((0.16, 0.88)))
-        time.sleep(1)
+        time.sleep(0.5)
         self.mouse_click_on_screen(self.game_ratio_to_screen_point((0.54, 0.76)))
         time.sleep(2)
         self.mouse_click_on_screen(self.game_ratio_to_screen_point((0.20, 0.28)))
-        time.sleep(1)
+        time.sleep(0.5)
         self.mouse_click_on_screen(self.game_ratio_to_screen_point((0.60, 0.44)))
         time.sleep(3)
 
         # do reset step
-        return self.get_initial_state()
+        self.prediction_iterator.send(None)
+        self.digit_iterator.send(0)
+        ret = self.get_initial_state()
+
+        # hack digit
+        self.last_score = 0
+        return ret
 
     def step(self, action, wait=0):
         if type(action) != BejeweledAction:
@@ -130,23 +136,25 @@ class BejeweledEnvironment(Environment):
             time.sleep(1.5)
         time.sleep(wait)
         # capture next state after wait
-        cached_digits = self.last_digit
+        cached_digits = self.last_score
         predictions, digits = next(self.state_iterator)
         reward = 0
         if cached_digits:
-            reward = self.last_digit - cached_digits
-        # print("Step Action: {}, Reward: {} ({} -> {})".format(action, reward, cached_digits, self.last_digit) )
+            reward = digits - cached_digits
+        print("Step Action: {}, Reward: {} ({} -> {})".format(action, reward, cached_digits, digits))
         return predictions, reward, False
 
     def render(self):
         duration = int(1000*(time.time() - self.render_timestamp))
-        result = Tagging.attach(self.last_image.copy(), self.last_state.prediction)
+        zero_img = np.zeros(self.last_image.shape, np.uint8)
+        result = Tagging.attach(zero_img, self.last_state.prediction)
 
-        cv2.putText(result, '%s ms' % duration, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 3)
+        cv2.putText(result, '%s ms' % duration, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (100, 100, 100), 3)
         cv2.imshow('Sprites', result)
         cv2.moveWindow('Sprites', 0, 0)
         cv2.waitKey(1)
         self.render_timestamp = time.time()
+        return result
 
     ''' Get current state representation:
         1. Grab Screen
@@ -154,14 +162,14 @@ class BejeweledEnvironment(Environment):
         3. restructure the prediction
     '''
     def gen_state(self):
-        self.prediction_iterator.send(None)
-        self.digit_iterator.send(None)
+        #self.prediction_iterator.send(None)
+        #self.digit_iterator.send(None)
         while True:
             predictions = next(self.prediction_iterator)
             digits = self.digit_iterator.__next__()
             predictions = BejeweledState(predictions) # Package the predictions
             self.last_state = predictions
-            self.last_digit = digits
+            self.last_score = digits
             yield predictions, digits
 
     def gen_screen_image(self):
@@ -186,6 +194,7 @@ class BejeweledEnvironment(Environment):
 
     def gen_digit(self, image_iterator):
         score = 0
+        last_score = 0
         for image in image_iterator:
             if self.recognize_digit:
                 import pyocr
@@ -193,7 +202,7 @@ class BejeweledEnvironment(Environment):
                 import pyocr.builders
                 from PIL import Image
 
-                digit_ratio = (0.1016, 0.1870, 0.2228, 0.2195)
+                digit_ratio = (0.1016, 0.1936, 0.2228, 0.2168)
                 digits = selectROI(image, ratio=digit_ratio, round8=False)
                 bw_img = digits
                 cv2.imwrite('digit_sample.jpg', bw_img)
@@ -203,14 +212,18 @@ class BejeweledEnvironment(Environment):
                     builder=pyocr.builders.TextBuilder()
                 )
                 txt = txt.replace(',','').replace('.','')
+                if last_score is not None:
+                    print('trigger')
+                    score = last_score
                 last_score = score
                 if txt.isdigit() and int(txt) >= last_score: # reward should not decrease
-                    score = int(txt)
+                    score = int(txt) / 100.0
                 else:
                     score = last_score
+                print("TXT:", txt, 'score:', score , 'last_score:', last_score)
                 # scale score
-                score = score / 1
-                yield score
+
+                last_score = yield score
             else:
                 yield 0
 

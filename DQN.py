@@ -32,13 +32,19 @@ class DQN(Agent):
         self.epsilon = INITIAL_EPSILON
         self.action_dim = 2*7*8 + 1
 
+        self.checkpointDir = './model/dqn_model/'
+
         self.create_Q_network()
         self.create_training_method()
+
+        variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='dqn')
+        self.saver = tf.train.Saver(var_list=variables)
 
         assert self.Q_value.graph is tf.get_default_graph()
         init = tf.global_variables_initializer()
         self.session = tf.Session(graph=self.Q_value.graph)
         self.session.run(init)
+
 
     def create_Q_network(self):
         input_layer = tf.placeholder(tf.float32, [None, 8, 8, 9])
@@ -90,9 +96,18 @@ class DQN(Agent):
 
 
     def create_training_method(self):
+        self.global_step = tf.Variable(0, name='global_step', trainable=False)
         Q_action = tf.reduce_sum(tf.multiply(self.Q_value, self.a_input), reduction_indices=1)
         self.cost = tf.reduce_mean(tf.square(self.y_label - Q_action))
-        self.optimizer = tf.train.AdamOptimizer(0.0001).minimize(self.cost)
+        self.optimizer = tf.train.AdamOptimizer(0.0001).minimize(self.cost, global_step=self.global_step)
+
+    def restore_model(self):
+        ckpt = tf.train.get_checkpoint_state(self.checkpointDir)
+        if ckpt:
+            self.saver.restore(self.session, ckpt.model_checkpoint_path)
+            print("[DQN Prepare] Model " + ckpt.model_checkpoint_path + " restored.")
+        else:
+            print("[DQN Prepare] Model not found at", self.checkpointDir)
 
     def perceive(self, state, action, reward, next_state, done):
         one_hot_action = np.zeros(self.action_dim)
@@ -132,6 +147,10 @@ class DQN(Agent):
             self.s_input: state_batch
         })
 
+        if self.time_step % 200 == 0:
+            self.saver.save(self.session, self.checkpointDir + 'model.ckpt', global_step=self.global_step)
+            print('[DQN Model] model saved:', self.global_step)
+
     def greedy_action(self, state):
         Q_value = self.Q_value.eval(session=self.session, feed_dict={
             self.s_input: [state]
@@ -140,36 +159,81 @@ class DQN(Agent):
         self.epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / 10000
 
         if random.random() <= self.epsilon:
-            return random.randint(0, self.action_dim - 1), 1
+            return random.randint(0, self.action_dim - 1), Q_value, 1
         else:
-            return np.argmax(Q_value), 0
+            return np.argmax(Q_value), Q_value, 0
 
     def action(self, state):
         Q_value = self.Q_value.eval(session=self.session, feed_dict={
-            self.s_input: state
-        })
+            self.s_input: [state]
+        })[0]
         return np.argmax(Q_value)
+
+def tag(img, q_values, action, reward, action_space):
+    step_h, step_w = int(img.shape[0] / 8), int(img.shape[1] / 8)
+    def p(c, r):
+        return (int((c+0.5)*step_w), int((r+0.5)*step_h))
+
+    maximum = np.max(q_values)
+    minimum = np.min(q_values)
+    average = np.average(q_values)
+    print('qv, max={}, min={}, avg={}'.format(maximum, minimum, average))
+    print(sorted(-q_values))
+    for idx, qv in enumerate(q_values):
+        a, b, c = action_space[idx]
+        if c == 'H':
+            row1, row2 = a, a
+            col1, col2 = b, b + 1
+        elif c == 'V':
+            col1, col2 = a, a
+            row1, row2 = b, b + 1
+        else:
+            continue
+        if qv >= 0:
+            color = (0, 0, int(qv/maximum*255))
+            thickness = int(qv/maximum*5)
+        else:
+            color = (0, int(qv/minimum*255), 0)
+            thickness = int(qv/maximum*5)
+
+        cv2.line(img, p(col1, row1), p(col2, row2), color, thickness=thickness)
+        if idx == action:
+            cv2.rectangle(img, p(col1 - 0.4, row1 - 0.4), p(col1 + 0.4, row1 + 0.4), (255, 0, 0), 3)
+
+    if reward > 0:
+        cv2.rectangle(img, (0, 0), p(2, 1), (0, 255, 0), -1)
+        cv2.putText(img, '%s' % int(reward*100), (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 3)
+
+
+    cv2.imshow('Sprites', img)
+    cv2.waitKey(1)
+
 
 if __name__ == '__main__':
     env = BejeweledEnvironment()
     agent = DQN()
-    STEP_NUM = 500
-    TEST_ROUND = 10
+    STEP_NUM = 50
+    TEST_ROUND = 1
+
+    action_space = BejeweledAction().action_space
+    agent.restore_model()
 
     for episode in range(10000):
         _state, initial_score = env.reset()
+        print("Initial score", initial_score)
         state = _state.state
 
         print("Episode {} start.".format(episode))
 
         for step in range(STEP_NUM):
-            action, flag_greedy = agent.greedy_action(state)
+            action, q_values, flag_greedy = agent.greedy_action(state)
             _next_state, reward, done = env.step(action)
             next_state = _next_state.state
             print("{}#{} Step Action: {}, Reward: {} Greedy: {} eps={}".
                   format(episode, step, BejeweledAction().action_space[action], reward, flag_greedy, agent.epsilon))
 
-            env.render()
+            result = env.render()
+            tag(result, q_values, action, reward, action_space)
 
             if np.count_nonzero(_next_state.prediction == 0) > 40:
                 print("No detection, sleep for 3 seconds.")
@@ -180,15 +244,17 @@ if __name__ == '__main__':
             if done:
                 break
 
-        # test per 10 episode
-        if episode % 10 == 0 and episode > 0:
+        # test per 50 episode
+        if episode % 50 == 0 and episode > 0:
             total_reward = 0
             for i in range(TEST_ROUND):
-                state = env.reset()
+                _state, initial_score = env.reset()
+                state = _state.state
                 for j in range(STEP_NUM):
                     env.render()
                     action = agent.action(state)  # direct action for test
-                    state, reward, done = env.step(action)
+                    _next_state, reward, done = env.step(action)
+                    next_state = _next_state.state
                     total_reward += reward
                     if done:
                         break
