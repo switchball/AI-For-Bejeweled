@@ -141,6 +141,10 @@ class BejeweledEnvironment(Environment):
         reward = 0
         if cached_digits:
             reward = digits - cached_digits
+        if reward < 0:
+            reward = 0
+        if reward >= 3:
+            reward = 3
         print("Step Action: {}, Reward: {} ({} -> {})".format(action, reward, cached_digits, digits))
         return predictions, reward, False
 
@@ -202,7 +206,7 @@ class BejeweledEnvironment(Environment):
                 import pyocr.builders
                 from PIL import Image
 
-                digit_ratio = (0.1016, 0.1936, 0.2228, 0.2168)
+                digit_ratio = (0.1016, 0.1836, 0.2228, 0.2268)
                 digits = selectROI(image, ratio=digit_ratio, round8=False)
                 bw_img = digits
                 cv2.imwrite('digit_sample.jpg', bw_img)
