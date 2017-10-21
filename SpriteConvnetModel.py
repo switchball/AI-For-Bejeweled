@@ -69,7 +69,7 @@ class SpriteConvnetModel:
                 # Output Tensor Shape: [batch_size, 10, 10, 64]
                 conv2 = tf.layers.conv2d(
                         inputs=pool1,
-                        filters=64,
+                        filters=16,
                         kernel_size=[5, 5],
                         padding="valid",
                         activation=tf.nn.relu)
@@ -84,7 +84,7 @@ class SpriteConvnetModel:
                 # Flatten tensor into a batch of vectors
                 # Input Tensor Shape: [batch_size, 5, 5, 64]
                 # Output Tensor Shape: [batch_size, 5 * 5 * 64]
-                pool2_flat = tf.reshape(pool2, [-1, 5 * 5 * 64])
+                pool2_flat = tf.reshape(pool2, [-1, 5 * 5 * 16])
 
             with tf.variable_scope("fc"):
                 # Dense Layer
@@ -114,16 +114,18 @@ class SpriteConvnetModel:
             loss = tf.losses.softmax_cross_entropy(
                     onehot_labels=onehot_labels, logits=logits)
 
-            # Configure the Training Op (for TRAIN mode)
-            optimizer = tf.train.AdagradOptimizer(learning_rate=0.001)
-            train_op = optimizer.minimize(
-                    loss=loss,
-                    global_step=tf.train.get_global_step())
-
             # Add evaluation metrics (for EVAL mode)
             eval_metric_ops = {
                     "accuracy": tf.metrics.accuracy(
                             labels=labels, predictions=predictions)}
+
+            # Configure the Training Op (for TRAIN mode)
+            optimizer = tf.train.AdagradOptimizer(learning_rate=0.0001)
+            train_op = optimizer.minimize(
+                    loss=loss,
+                    global_step=tf.train.get_global_step())
+
+
 
 
         self.logits = logits
@@ -189,7 +191,8 @@ class SpriteConvnetModel:
             #a, b = tf.train.shuffle_batch([features, labels], batch_size=64,
             #                              capacity=64000, min_after_dequeue=10240, enqueue_many=True)
             x = 0
-            for t in range(600):
+            batch_loss = 0
+            for t in range(400):
                 if (x+1)*64 > labels.shape[0]:
                     x = 0
                 if x == 0:
@@ -197,13 +200,15 @@ class SpriteConvnetModel:
                     np.random.shuffle(features)
                     np.random.set_state(rng_state)
                     np.random.shuffle(labels)
+                    print(int(t/86), batch_loss/86)
+                    batch_loss = 0
                 a = features[x*64: (x+1)*64]
                 b = labels[x*64: (x+1)*64]
-                _, lr = sess.run([self.train_op, self.learning_rate], feed_dict={
+                _, loss = sess.run([self.train_op, self.loss], feed_dict={
                     self.x_input: a,
                     self.y_label: b
                 })
-                print(t, x)
+                batch_loss += loss
                 x+=1
 
             saver.save(sess, self.config.checkpointDir + 'model.ckpt', global_step=global_step)

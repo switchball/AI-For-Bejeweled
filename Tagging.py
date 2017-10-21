@@ -94,7 +94,7 @@ class Tagging:
             s.ctrl_mode = 1
         else:
             s.ctrl_mode = 0
-        if event == cv2.EVENT_LBUTTONDOWN:
+        if flags & cv2.EVENT_FLAG_LBUTTON != 0:
             idx = int(x / 80) + int(y / 80) * 8
             if idx >= 64:
                 return
@@ -106,8 +106,12 @@ class Tagging:
         for idx, sprite in enumerate(self.img_generator(self.img)):
             self.img_label[idx] = self.default_predictor(sprite)
 
-    def tag(self):
-        self.pre_predict()
+    def tag(self, img=None, save_filename=None):
+        if img is not None:
+            assert img.shape == (32*8*8,32,3)
+            self.img_array = img
+        else:
+            self.pre_predict()
 
         font = cv2.FONT_HERSHEY_SIMPLEX
         param = {'self':self}
@@ -136,7 +140,12 @@ class Tagging:
         print('Saving tag results ... ', )
         cv2.destroyWindow('Tagging')
 
-        return self.save()
+        if save_filename is None:   # default
+            return self.save()
+        else:                       # image file already saved
+            np.save('img_data/'+save_filename+'-label.npy', self.img_label)
+            print('Done! Saved to img_data/' + save_filename + '-...')
+            return save_filename
 
     def save(self):
         t = time.strftime("%Y%m%d-%H%M%S", time.localtime())

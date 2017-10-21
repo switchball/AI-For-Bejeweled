@@ -13,6 +13,7 @@ import cv2
 import random
 import tensorflow as tf
 from collections import deque
+import pickle
 
 from Agent import Agent
 from BejeweledEnvironment import *
@@ -28,6 +29,7 @@ class DQN(Agent):
     def __init__(self):
         super(DQN, self).__init__()
         self.replay_buffer = deque()
+        self.load_replay()
         self.time_step = 0
         self.epsilon = INITIAL_EPSILON
         self.action_dim = 2*7*8 + 1
@@ -45,6 +47,13 @@ class DQN(Agent):
         self.session = tf.Session(graph=self.Q_value.graph)
         self.session.run(init)
 
+    def load_replay(self):
+        try:
+            with open('replay.dat', 'rb') as f:
+                self.replay_buffer = pickle.load(f)
+                print('Load Replay buffer size =', len(self.replay_buffer))
+        except:
+            print('Could not load replay buffer.')
 
     def create_Q_network(self):
         input_layer = tf.placeholder(tf.float32, [None, 8, 8, 9])
@@ -102,7 +111,7 @@ class DQN(Agent):
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
         Q_action = tf.reduce_sum(tf.multiply(self.Q_value, self.a_input), reduction_indices=1)
         self.cost = tf.reduce_mean(tf.square(self.y_label - Q_action))
-        self.optimizer = tf.train.AdamOptimizer(0.0001).minimize(self.cost, global_step=self.global_step)
+        self.optimizer = tf.train.AdamOptimizer(0.001).minimize(self.cost, global_step=self.global_step)
 
     def restore_model(self):
         ckpt = tf.train.get_checkpoint_state(self.checkpointDir)
@@ -115,12 +124,23 @@ class DQN(Agent):
     def perceive(self, state, action, reward, next_state, done):
         one_hot_action = np.zeros(self.action_dim)
         one_hot_action[action] = 1
-        self.replay_buffer.append((state, one_hot_action, reward, next_state, done))
+
+        ### Permutation on state and next_state
+        _ind = [0]+list(np.random.permutation([1,2,3,4,5,6,7]))+[8]
+        state_p = np.swapaxes(np.swapaxes(state, 0, 2)[_ind], 0, 2)
+        next_state_p = np.swapaxes(np.swapaxes(next_state, 0, 2)[_ind], 0, 2)
+        ### Permutation finished
+
+        self.replay_buffer.append((state_p, one_hot_action, reward, next_state_p, done))
         if len(self.replay_buffer) > REPLAY_SIZE:
             self.replay_buffer.popleft()
 
         if len(self.replay_buffer) > BATCH_SIZE:
             self.train_Q_network()
+
+        if len(self.replay_buffer) % 20 == 0:
+            with open('replay.dat', 'wb') as f:
+                pickle.dump(self.replay_buffer, f, True)
 
     def train_Q_network(self):
         self.time_step += 1
@@ -154,11 +174,18 @@ class DQN(Agent):
             self.saver.save(self.session, self.checkpointDir + 'model.ckpt', global_step=self.global_step)
             print('[DQN Model] model saved:', self.global_step)
 
-    def eval_result(self, state):
+    def eval_conv_result(self, state):
         v = self.conv1.eval(session=self.session, feed_dict={
             self.s_input: [state]
         })[0]
         return v
+
+    def eval_kernel_result(self, idx):
+        with tf.variable_scope('dqn', reuse=True):
+            kernel = tf.get_variable('conv1/kernel')
+            bias = tf.get_variable('conv1/bias')
+            ks, bs = self.session.run([kernel, bias])
+            return ks[:,:,:, idx], bs[idx]
 
     def greedy_action(self, state):
         Q_value = self.Q_value.eval(session=self.session, feed_dict={
@@ -188,8 +215,7 @@ def tag(img, q_values, action, reward, action_space):
     minimum = np.min(q_values)
     average = np.average(q_values)
     nonzero = np.count_nonzero(q_values==0)
-    print('qv, max={}, min={}, avg={}, #Zeros={}'.format(maximum, minimum, average, nonzero))
-    print(sorted(-q_values))
+    # print('qv, max={}, min={}, avg={}, #Zeros={}'.format(maximum, minimum, average, nonzero))
     for idx, qv in enumerate(q_values):
         a, b, c = action_space[idx]
         if c == 'H':
@@ -250,22 +276,90 @@ def default_solution(prediction):
 
 indices = [[0, 1, 2], [0, 8, 16], [1, 2, 3], [8, 16, 24], [2, 3, 4], [16, 24, 32], [3, 4, 5], [24, 32, 40], [4, 5, 6], [32, 40, 48], [5, 6, 7], [40, 48, 56], [8, 9, 10], [1, 9, 17], [9, 10, 11], [9, 17, 25], [10, 11, 12], [17, 25, 33], [11, 12, 13], [25, 33, 41], [12, 13, 14], [33, 41, 49], [13, 14, 15], [41, 49, 57], [16, 17, 18], [2, 10, 18], [17, 18, 19], [10, 18, 26], [18, 19, 20], [18, 26, 34], [19, 20, 21], [26, 34, 42], [20, 21, 22], [34, 42, 50], [21, 22, 23], [42, 50, 58], [24, 25, 26], [3, 11, 19], [25, 26, 27], [11, 19, 27], [26, 27, 28], [19, 27, 35], [27, 28, 29], [27, 35, 43], [28, 29, 30], [35, 43, 51], [29, 30, 31], [43, 51, 59], [32, 33, 34], [4, 12, 20], [33, 34, 35], [12, 20, 28], [34, 35, 36], [20, 28, 36], [35, 36, 37], [28, 36, 44], [36, 37, 38], [36, 44, 52], [37, 38, 39], [44, 52, 60], [40, 41, 42], [5, 13, 21], [41, 42, 43], [13, 21, 29], [42, 43, 44], [21, 29, 37], [43, 44, 45], [29, 37, 45], [44, 45, 46], [37, 45, 53], [45, 46, 47], [45, 53, 61], [48, 49, 50], [6, 14, 22], [49, 50, 51], [14, 22, 30], [50, 51, 52], [22, 30, 38], [51, 52, 53], [30, 38, 46], [52, 53, 54], [38, 46, 54], [53, 54, 55], [46, 54, 62], [56, 57, 58], [7, 15, 23], [57, 58, 59], [15, 23, 31], [58, 59, 60], [23, 31, 39], [59, 60, 61], [31, 39, 47], [60, 61, 62], [39, 47, 55], [61, 62, 63], [47, 55, 63]]
 
+def tag_conv(conv):
+    size = 40
+    img = np.zeros((size*6+60, size*6, 3), np.uint8)
+    # conv.shape = (6, 6, 16)
+    tm = np.max(conv)
+    try:
+        for i in range(conv.shape[0]):
+            for j in range(conv.shape[1]):
+                for k in range(conv.shape[2]):
+                    base_x, base_y = j*size, i*size
+                    pad_x, pad_y = 11+(k%4)*5, 11+int(k/4)*5
+                    maximum = np.max(conv[i,j])
+                    color = (0,0,int(conv[i,j,k]/maximum*255))
+                    cv2.rectangle(img, (base_x + pad_x, base_y + pad_y),
+                                  (base_x + pad_x + 3, base_y + pad_y + 3),
+                                  color, -1)
+                    thickness = int(3*maximum/tm)
+                    if thickness > 0:
+                        cv2.rectangle(img, (base_x+4, base_y+4),
+                                      (base_x + size-4, base_y + size-4),
+                                      (0, 255, 0), thickness)
+    except Exception as e:
+        print(e)
+
+    cv2.putText(img, '%s' % tm, (10, 280), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 3)
+    cv2.imshow('conv1', img)
+    cv2.moveWindow('conv1', 1024+168, 0)
+    cv2.waitKey(1)
+
+def tag_kernel(kernel_v, bias_v, idx):
+    size = 64
+    img = np.zeros((size+90, size*9, 3), np.uint8)
+    tm = np.max(kernel_v)
+    try:
+        for k in range(kernel_v.shape[2]):
+            maximum = np.max(kernel_v[:, :, k])
+            minimum = np.min(kernel_v[:, :, k])
+            mm = max(maximum, -minimum) + 0.001
+            thickness = int(3 * maximum / tm)
+            for i in range(kernel_v.shape[0]):
+                for j in range(kernel_v.shape[1]):
+                    base_x, base_y = k*size, 0
+                    pad_x, pad_y = 13+j*14, 13+i*14
+                    v = kernel_v[i,j,k]
+                    if v >= 0:
+                        color = (0, 0, int(v / mm * 255))
+                    else:
+                        color = (int(-v / mm * 255), 0, 0)
+                    cv2.rectangle(img, (base_x + pad_x, base_y + pad_y),
+                                  (base_x + pad_x + 10, base_y + pad_y + 10),
+                                  color, -1)
+                    if thickness > 0:
+                        cv2.rectangle(img, (base_x+7, base_y+9),
+                                      (base_x + size-9, base_y + size-9),
+                                      (0, 255, 0), thickness)
+            cv2.putText(img, '%.3f' % maximum, (10+k*size, 86), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        (255, 255, 255), thickness)
+    except Exception as e:
+        print(e)
+
+    cv2.putText(img, '#%s max(k)=%.4f, bias=%.4f' % (idx, tm, bias_v), (10, 126), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 3)
+    cv2.imshow('kernel', img)
+    cv2.moveWindow('kernel', 550, 512+20)
+    cv2.waitKey(1)
 
 if __name__ == '__main__':
     env = BejeweledEnvironment()
     agent = DQN()
-    STEP_NUM = 50
+    STEP_NUM = 200
     TEST_ROUND = 1
 
     action_space = BejeweledAction().action_space
     agent.restore_model()
 
-    for episode in range(1000):
+    from AdaptiveRec import AdaptiveRec
+    AR = AdaptiveRec()
+
+    for episode in range(500):
         _state, initial_score = env.reset()
         print("Initial score", initial_score)
         state = _state.state
 
         print("Episode {} start.".format(episode))
+        total_reward = 0
 
         for step in range(STEP_NUM):
             action, q_values, flag_greedy = agent.greedy_action(state)
@@ -273,19 +367,26 @@ if __name__ == '__main__':
             if (flag_greedy):
                 action = default_solution(_state.prediction)
 
-                print("Faking action:", action)
-
             _next_state, reward, done = env.step(action, wait=0.6)
             next_state = _next_state.state
-            print("{}#{} Step Action: {}, Reward: {} Greedy: {} eps={}".
-                  format(episode, step, BejeweledAction().action_space[action], reward, flag_greedy, agent.epsilon))
+            total_reward += reward
+            #print("{}#{} Step Action: {}, Reward: {} Greedy: {} eps={}".
+            #      format(episode, step, BejeweledAction().action_space[action], reward, flag_greedy, agent.epsilon))
 
             result = env.render()
             tag(result, q_values, action, reward, action_space)
 
-            print(agent.eval_result(state).shape)
+            conv = agent.eval_conv_result(state)
+            tag_conv(conv)
 
-            if np.count_nonzero(_next_state.prediction == 0) > 40:
+            k_v, b_v = agent.eval_kernel_result(int((step%64)/4) )
+            tag_kernel(k_v, b_v, int((step%64)/4) )
+
+            AR.append(env.last_image, _state.prediction)
+            AR.show()
+            # _ = env.last_image # get sprite img
+
+            if np.count_nonzero(_next_state.prediction == 0) > 30:
                 print("No detection, sleep for 3 seconds.")
                 time.sleep(3)
 
@@ -294,6 +395,9 @@ if __name__ == '__main__':
             _state = _next_state
             if done:
                 break
+
+        avg_reward = total_reward / TEST_ROUND
+        print('episode: ', episode, 'Evaluation Average Reward:', avg_reward, "Greedy:", agent.epsilon)
 
         # test per 50 episode
         if episode % 50 == 0 and episode > 0:

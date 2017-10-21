@@ -145,7 +145,7 @@ class BejeweledEnvironment(Environment):
             reward = 0
         if reward >= 3:
             reward = 3
-        print("Step Action: {}, Reward: {} ({} -> {})".format(action, reward, cached_digits, digits))
+        # print("Step Action: {}, Reward: {} ({} -> {})".format(action, reward, cached_digits, digits))
         return predictions, reward, False
 
     def render(self):
@@ -224,7 +224,7 @@ class BejeweledEnvironment(Environment):
                     score = int(txt) / 100.0
                 else:
                     score = last_score
-                print("TXT:", txt, 'score:', score , 'last_score:', last_score)
+                # print("TXT:", txt, 'score:', score , 'last_score:', last_score)
                 # scale score
 
                 last_score = yield score
