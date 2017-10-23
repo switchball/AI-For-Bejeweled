@@ -102,7 +102,7 @@ class SpriteConvnetModel:
                 # Logits layer
                 # Input Tensor Shape: [batch_size, 256]
                 # Output Tensor Shape: [batch_size, 8]
-                logits = tf.layers.dense(inputs=dense, units=8)
+                logits = tf.layers.dense(inputs=dense, units=9)
 
             with tf.variable_scope("predictions"):
                 probabilities = tf.nn.softmax(logits, name="softmax_tensor")
@@ -110,7 +110,7 @@ class SpriteConvnetModel:
                 predictions = tf.argmax(input=logits, axis=1)
 
             # Calculate Loss (for both TRAIN and EVAL modes)
-            onehot_labels = tf.one_hot(indices=tf.cast(labels, tf.int32), depth=8)
+            onehot_labels = tf.one_hot(indices=tf.cast(labels, tf.int32), depth=9)
             loss = tf.losses.softmax_cross_entropy(
                     onehot_labels=onehot_labels, logits=logits)
 
@@ -192,7 +192,7 @@ class SpriteConvnetModel:
             #                              capacity=64000, min_after_dequeue=10240, enqueue_many=True)
             x = 0
             batch_loss = 0
-            for t in range(400):
+            for t in range(10000):
                 if (x+1)*64 > labels.shape[0]:
                     x = 0
                 if x == 0:
@@ -211,7 +211,8 @@ class SpriteConvnetModel:
                 batch_loss += loss
                 x+=1
 
-            saver.save(sess, self.config.checkpointDir + 'model.ckpt', global_step=global_step)
+                if t % 1000 == 0:
+                    saver.save(sess, self.config.checkpointDir + 'model.ckpt', global_step=global_step)
 
         return None
 
@@ -461,6 +462,10 @@ def main():
 
     from img_utils import collect_sprite_training_data
     features, labels = collect_sprite_training_data(root + "img_data")
+
+    unique, counts = np.unique(labels, return_counts=True)
+    print(dict(zip(unique, counts)))
+
     model = SpriteConvnetModel(FLAGS, False, True)
     model.train_prepare(restore_model=False)
     model.train(features, labels)
