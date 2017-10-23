@@ -138,7 +138,7 @@ class BejeweledEnvironment(Environment):
             time.sleep(0.05)
             self.mouse_click_on_sprite(row2, col2)
         else:
-            time.sleep(1.5)
+            time.sleep(0.5)
         time.sleep(wait)
         # capture next state after wait
         cached_digits = self.last_score

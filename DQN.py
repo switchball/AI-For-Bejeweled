@@ -33,6 +33,7 @@ class DQN(Agent):
             batch_size=32,
             e_greedy_increment=None,
             double_q=True,
+            dueling=True,
             output_graph=False):
         super(DQN, self).__init__()
         self.n_actions = n_actions
@@ -45,6 +46,7 @@ class DQN(Agent):
         self.epsilon_increment = e_greedy_increment
         self.epsilon = 0 if e_greedy_increment is not None else self.epsilon_max
         self.double_q = double_q
+        self.dueling = dueling
 
         # total learning step
         self.learn_step_counter = 0
@@ -89,6 +91,67 @@ class DQN(Agent):
             print('Could not load replay buffer.')
 
     def create_Q_network(self):
+        def build_layers(input_layer, c_name, filter_num=32, fc_num=1024):
+            with tf.variable_scope(c_name, reuse=False):
+                with tf.variable_scope('Conv'):
+                    part_A = tf.slice(input_layer, [0, 0, 0, 0], [-1, 8, 8, 1])
+                    part_B = tf.slice(input_layer, [0, 0, 0, 1], [-1, 8, 8, 7])
+                    part_C = tf.slice(input_layer, [0, 0, 0, 8], [-1, 8, 8, 1])
+
+                    conv1_A = tf.layers.conv2d(
+                        inputs=part_A,
+                        filters=filter_num,
+                        kernel_size=[3, 3],
+                        padding='valid',
+                        activation=tf.nn.relu,
+                        use_bias=False,
+                        name='conv1_A'
+                    )
+                    conv1_BB = tf.layers.conv3d(
+                        inputs=tf.expand_dims(part_B, -1),
+                        filters=filter_num,
+                        kernel_size=[3, 3, 1],
+                        padding='valid',
+                        activation=tf.nn.relu,
+                        use_bias=True,
+                        name='conv1_BB'
+                    )
+                    conv1_C = tf.layers.conv2d(
+                        inputs=part_C,
+                        filters=filter_num,
+                        kernel_size=[3, 3],
+                        padding='valid',
+                        activation=tf.nn.relu,
+                        use_bias=False,
+                        name='conv1_C'
+                    )
+                    conv1_B = tf.tensordot(conv1_BB, tf.ones(7, tf.float32),
+                                           axes=[[3], [0]], name='conv1_B')
+
+                    conv1 = tf.add(tf.add(conv1_A, conv1_C), conv1_B, name='conv1')
+
+                    conv1_flat = tf.reshape(conv1, [-1, 6 * 6 * filter_num])
+
+                if self.dueling:
+                    # Dueling DQN
+                    with tf.variable_scope('Value'):
+                        _fc = tf.layers.dense(inputs=conv1_flat, units=fc_num, activation=tf.nn.relu)
+                        self.V = tf.layers.dense(inputs=_fc, units=1)
+
+                    with tf.variable_scope('Advantage'):
+                        _fc = tf.layers.dense(inputs=conv1_flat, units=fc_num, activation=tf.nn.relu)
+                        self.A = tf.layers.dense(inputs=_fc, units=self.action_dim)
+
+                    with tf.variable_scope('Q'):
+                        out = self.V + (self.A - tf.reduce_mean(self.A, axis=1, keep_dims=True))  # Q = V(s) + A(s,a)
+                else:
+                    with tf.variable_scope('Q'):
+                        fc = tf.layers.dense(inputs=conv1_flat, units=fc_num)
+                        out = tf.layers.dense(inputs=fc, units=self.action_dim)
+
+                q_value = out
+                return q_value
+
         input_layer = tf.placeholder(tf.float32, [None, 8, 8, 9], name='s')
         input_layer_ = tf.placeholder(tf.float32, [None, 8, 8, 9], name='s_')
         action_input = tf.placeholder(tf.int32, [None,], name='a')
@@ -98,97 +161,11 @@ class DQN(Agent):
         self.a = action_input
         self.r = reward_input
 
-        filter_num = 64
+        filter_num = 32
+        fc_num = 1024
 
-        with tf.variable_scope("eval_dqn", reuse=False):
-            part_A = tf.slice(input_layer, [0, 0, 0, 0], [-1, 8, 8, 1])
-            part_B = tf.slice(input_layer, [0, 0, 0, 1], [-1, 8, 8, 7])
-            part_C = tf.slice(input_layer, [0, 0, 0, 8], [-1, 8, 8, 1])
-
-            conv1_A = tf.layers.conv2d(
-                inputs=part_A,
-                filters=filter_num,
-                kernel_size=[3, 3],
-                padding='valid',
-                activation=tf.nn.relu,
-                use_bias=False,
-                name='conv1_A'
-            )
-            conv1_BB = tf.layers.conv3d(
-                inputs=tf.expand_dims(part_B, -1),
-                filters=filter_num,
-                kernel_size=[3, 3, 1],
-                padding='valid',
-                activation=tf.nn.relu,
-                use_bias=True,
-                name='conv1_BB'
-            )
-            conv1_C = tf.layers.conv2d(
-                inputs=part_C,
-                filters=filter_num,
-                kernel_size=[3, 3],
-                padding='valid',
-                activation=tf.nn.relu,
-                use_bias=False,
-                name='conv1_C'
-            )
-            conv1_B = tf.tensordot(conv1_BB, tf.ones(7, tf.float32),
-                                    axes = [[3], [0]], name='conv1_B')
-
-            self.conv1 = tf.add(tf.add(conv1_A, conv1_C), conv1_B, name='conv1')
-
-            conv1_flat = tf.reshape(self.conv1, [-1, 6 * 6 * filter_num])
-
-            # Dense Layer
-            # Densely connected layer with 256 neurons
-            # Input Tensor Shape: [batch_size, 8 * 8 * 64]
-            # Output Tensor Shape: [batch_size, 113]
-            self.q_value = tf.layers.dense(inputs=conv1_flat, units=self.action_dim, activation=tf.nn.relu)
-
-        with tf.variable_scope("target_dqn", reuse=False):
-            part_A = tf.slice(input_layer_, [0, 0, 0, 0], [-1, 8, 8, 1])
-            part_B = tf.slice(input_layer_, [0, 0, 0, 1], [-1, 8, 8, 7])
-            part_C = tf.slice(input_layer_, [0, 0, 0, 8], [-1, 8, 8, 1])
-
-            conv1_A = tf.layers.conv2d(
-                inputs=part_A,
-                filters=filter_num,
-                kernel_size=[3, 3],
-                padding='valid',
-                activation=tf.nn.relu,
-                use_bias=False,
-                name='conv1_A'
-            )
-            conv1_BB = tf.layers.conv3d(
-                inputs=tf.expand_dims(part_B, -1),
-                filters=filter_num,
-                kernel_size=[3, 3, 1],
-                padding='valid',
-                activation=tf.nn.relu,
-                use_bias=True,
-                name='conv1_BB'
-            )
-            conv1_C = tf.layers.conv2d(
-                inputs=part_C,
-                filters=filter_num,
-                kernel_size=[3, 3],
-                padding='valid',
-                activation=tf.nn.relu,
-                use_bias=False,
-                name='conv1_C'
-            )
-            conv1_B = tf.tensordot(conv1_BB, tf.ones(7, tf.float32),
-                                    axes = [[3], [0]], name='conv1_B')
-
-            self.t_conv1 = tf.add(tf.add(conv1_A, conv1_C), conv1_B, name='conv1')
-
-            conv1_flat = tf.reshape(self.t_conv1, [-1, 6 * 6 * filter_num])
-
-            # Dense Layer
-            # Densely connected layer with 256 neurons
-            # Input Tensor Shape: [batch_size, 8 * 8 * 64]
-            # Output Tensor Shape: [batch_size, 113]
-            self.q_next = tf.layers.dense(inputs=conv1_flat, units=self.action_dim, activation=tf.nn.relu)
+        self.q_value = build_layers(input_layer, 'eval_dqn')
+        self.q_next = build_layers(input_layer_, 'target_dqn')
 
     def create_training_method(self):
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
@@ -248,7 +225,8 @@ class DQN(Agent):
             if self.learn_step_counter > 0:
                 self.saver.save(self.session, self.checkpointDir + 'model.ckpt', global_step=self.global_step)
                 print('[DQN Model] model saved. last batch loss =', np.average(self.loss_his[-self.replace_target_iter:-1]))
-
+            else:
+                print('[DQN Model] training start!')
         # Step 2: obtain random mini_batch from replay memory
         mini_batch = random.sample(self.replay_buffer, self.batch_size)
         state_batch = [data[0] for data in mini_batch]
@@ -320,7 +298,8 @@ def tag(img, q_values, action, reward, action_space):
     minimum = np.min(q_values)
     average = np.average(q_values)
     nonzero = np.count_nonzero(q_values==0)
-    print('qv, max={}, min={}, avg={}, #Zeros={}'.format(maximum, minimum, average, nonzero))
+    print('qv, max={}, min={}, avg={}, #Zeros={}, action={}'.
+          format(maximum, minimum, average, nonzero, action_space[action]))
     for idx, qv in enumerate(q_values):
         a, b, c = action_space[idx]
         if c == 'H':
@@ -332,11 +311,11 @@ def tag(img, q_values, action, reward, action_space):
         else:
             continue
         if qv >= 0:
-            color = (0, 0, int(qv/maximum*255))
-            thickness = int(qv/maximum*5)
+            color = (0, 0, int(qv/maximum*255)) if maximum > 0 else (0,0,0)
+            thickness = int(qv/maximum*5) if maximum > 0 else 0
         else:
-            color = (0, int(qv/minimum*255), 0)
-            thickness = int(qv/maximum*5)
+            color = (0, int(qv/minimum*255), 0) if minimum < 0 else (0,0,0)
+            thickness = max(int(qv/minimum*5),0) if minimum < 0 else 0
 
         cv2.line(img, p(col1, row1), p(col2, row2), color, thickness=thickness)
         if idx == action:
@@ -473,7 +452,7 @@ if __name__ == '__main__':
 
             action, q_values, flag_greedy = agent.greedy_action(state)
 
-            if ((flag_greedy and random.random() < 0.6) or total_reward < 1000):
+            if ((flag_greedy and random.random() < 0.6) or total_reward < 2):
                 action = default_solution(_state.prediction)
 
             _next_state, reward, done = env.step(action, wait=1.3)
@@ -485,8 +464,8 @@ if __name__ == '__main__':
             # render before
             tag(result, q_values, action, reward, action_space)
 
-            conv = agent.eval_conv_result(state)
-            tag_conv(conv)
+            #conv = agent.eval_conv_result(state)
+            #tag_conv(conv)
 
             #k_v, b_v = agent.eval_kernel_result()
             #tag_kernel(k_v, b_v)
@@ -508,14 +487,14 @@ if __name__ == '__main__':
             else:
                 wait_round = 0
 
-            if total_reward > 1000:
+            if total_reward > 2:
                 agent.perceive(state, action, reward, next_state, done)
             state = next_state
             _state = _next_state
             if done:
                 break
 
-        avg_reward = total_reward / TEST_ROUND
+        avg_reward = total_reward
         print('episode: ', episode, 'Evaluation Average Reward:', avg_reward, "Greedy:", agent.epsilon)
 
         # test per 50 episode
