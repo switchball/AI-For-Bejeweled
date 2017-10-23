@@ -32,6 +32,7 @@ class DQN(Agent):
             memory_size=100000,
             batch_size=32,
             e_greedy_increment=None,
+            double_q=True,
             output_graph=False):
         super(DQN, self).__init__()
         self.n_actions = n_actions
@@ -43,6 +44,7 @@ class DQN(Agent):
         self.batch_size = batch_size
         self.epsilon_increment = e_greedy_increment
         self.epsilon = 0 if e_greedy_increment is not None else self.epsilon_max
+        self.double_q = double_q
 
         # total learning step
         self.learn_step_counter = 0
@@ -190,8 +192,15 @@ class DQN(Agent):
 
     def create_training_method(self):
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
+
         with tf.variable_scope('q_target'):
-            q_target = self.r + self.gamma * tf.reduce_max(self.q_next, axis=1, name='Qmax_s_')  # shape=(None, )
+            if self.double_q:
+                ind = tf.argmax(self.q_value, axis=1)
+                inds = tf.stack([tf.range(tf.shape(ind)[0], dtype=tf.int32), tf.cast(ind, tf.int32)], axis=1)
+                selected_q_next = tf.gather_nd(params=self.q_next, indices=inds, name='Q_maxQ_s_')  # shape=(None, )
+            else:
+                selected_q_next = tf.reduce_max(self.q_next, axis=1, name='Qmax_s_')
+            q_target = self.r + self.gamma * selected_q_next  # shape=(None, )
             self.q_target = tf.stop_gradient(q_target)
         with tf.variable_scope('q_eval'):
             a_indices = tf.stack([tf.range(tf.shape(self.a)[0], dtype=tf.int32), self.a], axis=1)
@@ -229,6 +238,7 @@ class DQN(Agent):
         if len(self.replay_buffer) % 20 == 0:
             with open('replay.dat', 'wb') as f:
                 pickle.dump(self.replay_buffer, f, True)
+                print("Replay save. ", len(self.replay_buffer))
 
     def train_Q_network(self):
         # Step 1: check to replace target parameters

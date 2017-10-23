@@ -148,8 +148,8 @@ class BejeweledEnvironment(Environment):
             reward = digits - cached_digits
         if reward < 0:
             reward = 0
-        if reward >= 10:
-            reward = 10
+        if reward >= 5:
+            reward = 5
         # print("Step Action: {}, Reward: {} ({} -> {})".format(action, reward, cached_digits, digits))
         return predictions, reward, False
 
@@ -227,7 +227,7 @@ class BejeweledEnvironment(Environment):
                     score = last_score
                 last_score = score
                 if txt.isdigit() and int(txt) >= last_score: # reward should not decrease
-                    score = int(txt) / 100.0
+                    score = int(txt) / 200.0
                 else:
                     score = last_score
                 # print("TXT:", txt, 'score:', score , 'last_score:', last_score)
