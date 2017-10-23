@@ -82,13 +82,13 @@ class DQN(Agent):
 
         self.loss_his = []
 
-    def load_replay(self):
+    def load_replay(self, name='replay.dat'):
         try:
-            with open('replay.dat', 'rb') as f:
+            with open(name, 'rb') as f:
                 self.replay_buffer = pickle.load(f)
-                print('Load Replay buffer size =', len(self.replay_buffer))
+                print('Load', name, 'size =', len(self.replay_buffer))
         except:
-            print('Could not load replay buffer.')
+            print('Could not load replay buffer:', name)
 
     def create_Q_network(self):
         def build_layers(input_layer, c_name, filter_num=32, fc_num=1024):
@@ -135,19 +135,28 @@ class DQN(Agent):
                 if self.dueling:
                     # Dueling DQN
                     with tf.variable_scope('Value'):
-                        _fc = tf.layers.dense(inputs=conv1_flat, units=fc_num, activation=tf.nn.relu)
-                        self.V = tf.layers.dense(inputs=_fc, units=1)
+                        if fc_num is not None and fc_num > 0:
+                            _fc = tf.layers.dense(inputs=conv1_flat, units=fc_num, activation=tf.nn.relu)
+                            self.V = tf.layers.dense(inputs=_fc, units=1)
+                        else:
+                            self.V = tf.layers.dense(inputs=conv1_flat, units=1)
 
                     with tf.variable_scope('Advantage'):
-                        _fc = tf.layers.dense(inputs=conv1_flat, units=fc_num, activation=tf.nn.relu)
-                        self.A = tf.layers.dense(inputs=_fc, units=self.action_dim)
+                        if fc_num is not None and fc_num > 0:
+                            _fc = tf.layers.dense(inputs=conv1_flat, units=fc_num, activation=tf.nn.relu)
+                            self.A = tf.layers.dense(inputs=_fc, units=self.action_dim)
+                        else:
+                            self.A = tf.layers.dense(inputs=conv1_flat, units=self.action_dim)
 
                     with tf.variable_scope('Q'):
                         out = self.V + (self.A - tf.reduce_mean(self.A, axis=1, keep_dims=True))  # Q = V(s) + A(s,a)
                 else:
                     with tf.variable_scope('Q'):
-                        fc = tf.layers.dense(inputs=conv1_flat, units=fc_num)
-                        out = tf.layers.dense(inputs=fc, units=self.action_dim)
+                        if fc_num is not None and fc_num > 0:
+                            fc = tf.layers.dense(inputs=conv1_flat, units=fc_num)
+                            out = tf.layers.dense(inputs=fc, units=self.action_dim)
+                        else:
+                            out = tf.layers.dense(inputs=conv1_flat, units=self.action_dim)
 
                 q_value = out
                 return q_value
@@ -164,8 +173,8 @@ class DQN(Agent):
         filter_num = 32
         fc_num = 1024
 
-        self.q_value = build_layers(input_layer, 'eval_dqn')
-        self.q_next = build_layers(input_layer_, 'target_dqn')
+        self.q_value = build_layers(input_layer, 'eval_dqn', fc_num=0)
+        self.q_next = build_layers(input_layer_, 'target_dqn', fc_num=0)
 
     def create_training_method(self):
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
@@ -234,17 +243,6 @@ class DQN(Agent):
         reward_batch = [data[2] for data in mini_batch]
         next_state_batch = [data[3] for data in mini_batch]
 
-        # Step 3: calculate y
-        y_batch = []
-        Q_value_batch = self.q_value.eval(session=self.session,
-                                          feed_dict={self.s: next_state_batch})
-        for i in range(0, self.batch_size):
-            done = mini_batch[i][4]
-            if done:
-                y_batch.append(reward_batch[i])
-            else:
-                y_batch.append(reward_batch[i] + self.gamma * np.max(Q_value_batch[i]))
-
         # Step 3: optimize (ignore done, assume done=False)
         _, loss = self.session.run([self._train_op, self.loss], feed_dict={
             self.s: state_batch,
@@ -278,9 +276,9 @@ class DQN(Agent):
         })[0]
 
         if random.random() <= self.epsilon:
-            return random.randint(0, self.action_dim - 1), Q_value, 1
-        else:
             return np.argmax(Q_value), Q_value, 0
+        else:
+            return random.randint(0, self.action_dim - 1), Q_value, 1
 
     def action(self, state):
         Q_value = self.q_value.eval(session=self.session, feed_dict={
@@ -428,7 +426,7 @@ def tag_kernel(kernel_v, bias_v):
 
 if __name__ == '__main__':
     env = BejeweledEnvironment()
-    agent = DQN(n_actions=2*7*8+1, e_greedy=0.8, output_graph=True)
+    agent = DQN(n_actions=2*7*8+1, e_greedy=0.2, output_graph=True)
     STEP_NUM = 200
     TEST_ROUND = 0
 
@@ -452,8 +450,8 @@ if __name__ == '__main__':
 
             action, q_values, flag_greedy = agent.greedy_action(state)
 
-            if ((flag_greedy and random.random() < 0.6) or total_reward < 2):
-                action = default_solution(_state.prediction)
+            #if ((flag_greedy and random.random() < 0.6) or total_reward < 2):
+            #    action = default_solution(_state.prediction)
 
             _next_state, reward, done = env.step(action, wait=1.3)
             next_state = _next_state.state
