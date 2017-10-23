@@ -94,12 +94,17 @@ class BejeweledEnvironment(Environment):
         self.last_score = 0
 
         self.mouse_click_on_screen(self.game_ratio_to_screen_point((0.16, 0.88)))
-        time.sleep(0.5)
+        time.sleep(0.1)
+        ## robust start
+        self.mouse_click_on_screen(self.game_ratio_to_screen_point((0.57, 0.85)))
+        self.mouse_click_on_screen(self.game_ratio_to_screen_point((0.57, 0.90)))
+        time.sleep(0.7)
+        ## robust end
         self.mouse_click_on_screen(self.game_ratio_to_screen_point((0.54, 0.76)))
-        time.sleep(2)
+        time.sleep(1.8)
         self.mouse_click_on_screen(self.game_ratio_to_screen_point((0.20, 0.28)))
         time.sleep(0.5)
-        self.mouse_click_on_screen(self.game_ratio_to_screen_point((0.60, 0.44)))
+        self.mouse_click_on_screen(self.game_ratio_to_screen_point((0.54, 0.44)))
         time.sleep(3)
 
         # do reset step
@@ -143,20 +148,21 @@ class BejeweledEnvironment(Environment):
             reward = digits - cached_digits
         if reward < 0:
             reward = 0
-        if reward >= 3:
-            reward = 3
+        if reward >= 10:
+            reward = 10
         # print("Step Action: {}, Reward: {} ({} -> {})".format(action, reward, cached_digits, digits))
         return predictions, reward, False
 
-    def render(self):
+    def render(self, show=True):
         duration = int(1000*(time.time() - self.render_timestamp))
         zero_img = np.zeros(self.last_image.shape, np.uint8)
         result = Tagging.attach(zero_img, self.last_state.prediction)
 
         cv2.putText(result, '%s ms' % duration, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (100, 100, 100), 3)
-        cv2.imshow('Sprites', result)
-        cv2.moveWindow('Sprites', 0, 0)
-        cv2.waitKey(1)
+        if show:
+            cv2.imshow('Sprites', result)
+            cv2.moveWindow('Sprites', 0, 0)
+            cv2.waitKey(1)
         self.render_timestamp = time.time()
         return result
 
@@ -217,7 +223,7 @@ class BejeweledEnvironment(Environment):
                 )
                 txt = txt.replace(',','').replace('.','')
                 if last_score is not None:
-                    print('trigger')
+                    #print('trigger')
                     score = last_score
                 last_score = score
                 if txt.isdigit() and int(txt) >= last_score: # reward should not decrease
