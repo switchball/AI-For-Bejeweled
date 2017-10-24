@@ -178,7 +178,7 @@ class BejeweledEnvironment(Environment):
             predictions = next(self.prediction_iterator)
             digits = self.digit_iterator.__next__()
             predictions = BejeweledState(predictions) # Package the predictions
-            self.last_state = predictions
+            self.last_state = predictions.state
             self.last_score = digits
             yield predictions, digits
 

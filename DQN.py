@@ -130,33 +130,43 @@ class DQN(Agent):
 
                     conv1 = tf.add(tf.add(conv1_A, conv1_C), conv1_B, name='conv1')
 
-                    conv1_flat = tf.reshape(conv1, [-1, 6 * 6 * filter_num])
+                    conv2 = tf.layers.conv2d(
+                        inputs=conv1,
+                        filters=64,
+                        kernel_size=[3, 3],
+                        padding='valid',
+                        activation=tf.nn.relu,
+                        name='conv2'
+                    )
+
+                    # conv_flat = tf.reshape(conv1, [-1, 6 * 6 * filter_num])
+                    conv_flat = tf.reshape(conv2, [-1, 4 * 4 * 64])
 
                 if self.dueling:
                     # Dueling DQN
                     with tf.variable_scope('Value'):
                         if fc_num is not None and fc_num > 0:
-                            _fc = tf.layers.dense(inputs=conv1_flat, units=fc_num, activation=tf.nn.relu)
+                            _fc = tf.layers.dense(inputs=conv_flat, units=fc_num, activation=tf.nn.relu)
                             self.V = tf.layers.dense(inputs=_fc, units=1)
                         else:
-                            self.V = tf.layers.dense(inputs=conv1_flat, units=1)
+                            self.V = tf.layers.dense(inputs=conv_flat, units=1)
 
                     with tf.variable_scope('Advantage'):
                         if fc_num is not None and fc_num > 0:
-                            _fc = tf.layers.dense(inputs=conv1_flat, units=fc_num, activation=tf.nn.relu)
+                            _fc = tf.layers.dense(inputs=conv_flat, units=fc_num, activation=tf.nn.relu)
                             self.A = tf.layers.dense(inputs=_fc, units=self.action_dim)
                         else:
-                            self.A = tf.layers.dense(inputs=conv1_flat, units=self.action_dim)
+                            self.A = tf.layers.dense(inputs=conv_flat, units=self.action_dim)
 
                     with tf.variable_scope('Q'):
                         out = self.V + (self.A - tf.reduce_mean(self.A, axis=1, keep_dims=True))  # Q = V(s) + A(s,a)
                 else:
                     with tf.variable_scope('Q'):
                         if fc_num is not None and fc_num > 0:
-                            fc = tf.layers.dense(inputs=conv1_flat, units=fc_num)
+                            fc = tf.layers.dense(inputs=conv_flat, units=fc_num)
                             out = tf.layers.dense(inputs=fc, units=self.action_dim)
                         else:
-                            out = tf.layers.dense(inputs=conv1_flat, units=self.action_dim)
+                            out = tf.layers.dense(inputs=conv_flat, units=self.action_dim)
 
                 q_value = out
                 return q_value
@@ -205,9 +215,6 @@ class DQN(Agent):
             print("[DQN Prepare] Model not found at", self.checkpointDir)
 
     def perceive(self, state, action, reward, next_state, done):
-        #one_hot_action = np.zeros(self.action_dim)
-        #one_hot_action[action] = 1
-
         ### Permutation on state and next_state
         _ind = [0]+list(np.random.permutation([1,2,3,4,5,6,7]))+[8]
         state_p = np.swapaxes(np.swapaxes(state, 0, 2)[_ind], 0, 2)
@@ -439,8 +446,7 @@ if __name__ == '__main__':
     wait_round = 0
 
     for episode in range(500):
-        _state, initial_score = env.reset()
-        state = _state.state
+        state, initial_score = env.reset()
 
         print("Episode {} start.".format(episode))
         total_reward = 0
@@ -453,8 +459,7 @@ if __name__ == '__main__':
             #if ((flag_greedy and random.random() < 0.6) or total_reward < 2):
             #    action = default_solution(_state.prediction)
 
-            _next_state, reward, done = env.step(action, wait=1.3)
-            next_state = _next_state.state
+            next_state, reward, done = env.step(action, wait=1.3)
             total_reward += reward
             #print("{}#{} Step Action: {}, Reward: {} Greedy: {} eps={}".
             #      format(episode, step, BejeweledAction().action_space[action], reward, flag_greedy, agent.epsilon))
@@ -472,7 +477,10 @@ if __name__ == '__main__':
             #AR.show()
             # _ = env.last_image # get sprite img
 
-            if np.count_nonzero(_next_state.prediction == 0) > 30:
+            # one hot state to predictions
+            p = np.tensordot(range(9), next_state, axes=([0], [2])).reshape((64, ))
+
+            if np.count_nonzero(p == 0) > 30:
                 print("No detection, sleep for 4 seconds.")
                 time.sleep(4)
                 if wait_round > 2:
@@ -488,29 +496,10 @@ if __name__ == '__main__':
             if total_reward > 2:
                 agent.perceive(state, action, reward, next_state, done)
             state = next_state
-            _state = _next_state
             if done:
                 break
 
         avg_reward = total_reward
         print('episode: ', episode, 'Evaluation Average Reward:', avg_reward, "Greedy:", agent.epsilon)
 
-        # test per 50 episode
-        if episode % 50 == 0 and episode > 0:
-            total_reward = 0
-            for i in range(TEST_ROUND):
-                _state, initial_score = env.reset()
-                state = _state.state
-                for j in range(STEP_NUM):
-                    env.render()
-                    action = agent.action(state)  # direct action for test
-                    _next_state, reward, done = env.step(action)
-                    next_state = _next_state.state
-                    total_reward += reward
-                    if done:
-                        break
-            avg_reward = total_reward / TEST_ROUND
-            print('episode: ', episode, 'Evaluation Average Reward:', avg_reward)
-            if avg_reward >= 10000:
-                break
 
