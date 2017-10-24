@@ -33,7 +33,7 @@ def interpolate(a, b, t):
 
 
 class BejeweledState():
-    TYPE_NUM = 9
+    TYPE_NUM = 11
     def __init__(self, predictions):
         self.prediction = predictions
         assert len(predictions) == 64
@@ -41,7 +41,22 @@ class BejeweledState():
 
     @staticmethod
     def prediction_to_state_one_hot(prediction):
-        return np.eye(BejeweledState.TYPE_NUM)[prediction].reshape(8,8,-1)
+        a = np.zeros((8,8,BejeweledState.TYPE_NUM))
+        for idx, p in enumerate(prediction):
+            i, j = int(idx/8), idx%8
+            if p <= 8:
+                a[i,j,p] = 1
+            elif 9 <= p and p <= 15:
+                a[i,j,p-8] = a[i,j,9] = 1
+            else:
+                a[i,j,p-15] = a[i,j,10] = 1
+        return a # np.eye(BejeweledState.TYPE_NUM)[prediction].reshape(8,8,-1)
+
+    @staticmethod
+    def one_hot_state_to_prediction(s):
+        r = [0,1,2,3,4,5,6,7,8,8,15]
+        p2 = np.tensordot(r, s, axes=([0], [2]))
+        return p2.reshape((64,))
 
 
 class BejeweledAction():
@@ -156,7 +171,7 @@ class BejeweledEnvironment(Environment):
     def render(self, show=True):
         duration = int(1000*(time.time() - self.render_timestamp))
         zero_img = np.zeros(self.last_image.shape, np.uint8)
-        result = Tagging.attach(zero_img, self.last_state.prediction)
+        result = Tagging.attach(zero_img, BejeweledState.one_hot_state_to_prediction(self.last_state))
 
         cv2.putText(result, '%s ms' % duration, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (100, 100, 100), 3)
         if show:
@@ -177,8 +192,8 @@ class BejeweledEnvironment(Environment):
         while True:
             predictions = next(self.prediction_iterator)
             digits = self.digit_iterator.__next__()
-            predictions = BejeweledState(predictions) # Package the predictions
-            self.last_state = predictions.state
+            predictions = BejeweledState(predictions).state # Package the predictions
+            self.last_state = predictions
             self.last_score = digits
             yield predictions, digits
 

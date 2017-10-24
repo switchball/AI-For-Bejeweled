@@ -35,6 +35,7 @@ class Tagging:
         self.img_label = np.zeros((64,), dtype=np.int8)
         self.crt_label = 0
         self.ctrl_mode = 0
+        self.add_on_label = 0
         self.default_predictor = default_classifier
         self.start()
 
@@ -54,8 +55,17 @@ class Tagging:
         if preds is None:
             preds = [default_classifier(x) for x in Tagging.img_generator(image)]
         step_h, step_w = int(image.shape[0]/8), int(image.shape[1]/8)
-        for idx, pred in enumerate(preds):
+        for idx, p in enumerate(preds):
             y, x = int(idx/8), idx % 8
+            if p <= 8:
+                pred = p
+                thickness=1
+            elif 9 <= p and p <= 15:
+                pred = p-8
+                thickness=2
+            else:
+                pred = p-15
+                thickness=3
             if fancy:
                 center = (int((x+.5)*step_w), int((y+.5)*step_h))
                 radius = int(0.309 * min(step_h, step_w))
@@ -69,10 +79,10 @@ class Tagging:
                 color = (255, 255, 255) if pred == 7 else color
                 color = (56, 200, 184) if pred == 8 else color
                 color = (color[2], color[1], color[0])
-                cv2.circle(image, center, radius, color, thickness=2)
+                cv2.circle(image, center, radius, color, thickness=thickness)
             else:
                 pass
-            cv2.putText(image, '%s' % pred, (22+x * step_w, 42 + y * step_h), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+            cv2.putText(image, '%s' % int(pred), (22+x * step_w, 42 + y * step_h), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
         return image
 
     def start(self):
@@ -98,7 +108,7 @@ class Tagging:
             idx = int(x / 80) + int(y / 80) * 8
             if idx >= 64:
                 return
-            s.img_label[idx] = s.crt_label
+            s.img_label[idx] = s.crt_label + s.add_on_label
             # print('x=', x, 'y=', y, 'idx=', idx)
 
 
@@ -110,6 +120,12 @@ class Tagging:
         if img is not None:
             assert img.shape == (32*8*8,32,3)
             self.img_array = img
+            # try to load image
+            try:
+                self.img_label = np.load('img_data/' + save_filename + '-label.npy')
+            except:
+                print('img_data/' + save_filename + '-label.npy not found, assume all zeros')
+            # end
         else:
             self.pre_predict()
 
@@ -123,17 +139,27 @@ class Tagging:
             for idx in range(8 * 8):
                 sprite = cv2.resize(self.img_array[(idx*32):(idx*32+32), :, :], (64, 64), cv2.INTER_CUBIC)
                 _x, _y = int(idx / 8), int(idx % 8)
-                if self.ctrl_mode == 0 or self.img_label[idx] == self.crt_label:
+                if self.ctrl_mode == 0 or self.img_label[idx] == self.crt_label + self.add_on_label:
                     tag_image[(_x * 80 + 8):(_x * 80 + 72), (_y * 80 + 8):(_y * 80 + 72)] = sprite
-                if self.img_label[idx] == self.crt_label and self.ctrl_mode == 0:
+                if self.img_label[idx] == self.crt_label + self.add_on_label and self.ctrl_mode == 0:
                     cv2.rectangle(tag_image, (_y * 80 + 8, _x * 80 + 8), (_y * 80 + 72, _x * 80 + 72), (0, 255, 0), 2)
 
-            cv2.putText(tag_image, 'Current label = %s' % self.crt_label, (10, 680), font, 1.0, (0, 255, 0), 2)
+            cv2.putText(tag_image, 'Current label = %s (%s)' % (self.crt_label, ['','Red','Orange','Yellow','Green','Blue','Purple','White','Special'][self.crt_label]), (10, 680), font, 1.0, (0, 255, 0), 2)
+            cv2.putText(tag_image, 'Current addon = (+%s)' % self.add_on_label, (10, 720), font, 1.0, (0, 255, 0), 2)
             cv2.imshow('Tagging', tag_image)
             key = cv2.waitKey(200) & 0xFF
             if (key >= ord('0') and key <= ord('9')):
                 self.crt_label = key - ord('0')
                 print('key=', key, 'chr(key)=', chr(key))
+            if (key == ord('F')):
+                self.add_on_label = 8 if self.add_on_label != 8 else 0
+                print('key=FIRE', 'chr(key)=', chr(key))
+            if (key == ord('C')):
+                self.add_on_label = 15 if self.add_on_label != 15 else 0
+                print('key=CROSS', 'chr(key)=', chr(key))
+            if (key == ord('N')):
+                self.add_on_label = 0
+                print('key=NORMAL', 'chr(key)=', chr(key))
             if key == 27:
                 break
 

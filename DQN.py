@@ -97,6 +97,8 @@ class DQN(Agent):
                     part_A = tf.slice(input_layer, [0, 0, 0, 0], [-1, 8, 8, 1])
                     part_B = tf.slice(input_layer, [0, 0, 0, 1], [-1, 8, 8, 7])
                     part_C = tf.slice(input_layer, [0, 0, 0, 8], [-1, 8, 8, 1])
+                    part_D = tf.slice(input_layer, [0, 0, 0, 9], [-1, 8, 8, 1])
+                    part_E = tf.slice(input_layer, [0, 0, 0, 10], [-1, 8, 8, 1])
 
                     conv1_A = tf.layers.conv2d(
                         inputs=part_A,
@@ -125,10 +127,28 @@ class DQN(Agent):
                         use_bias=False,
                         name='conv1_C'
                     )
+                    conv1_D = tf.layers.conv2d(
+                        inputs=part_D,
+                        filters=filter_num,
+                        kernel_size=[3, 3],
+                        padding='valid',
+                        activation=tf.nn.relu,
+                        use_bias=False,
+                        name='conv1_D'
+                    )
+                    conv1_E = tf.layers.conv2d(
+                        inputs=part_E,
+                        filters=filter_num,
+                        kernel_size=[3, 3],
+                        padding='valid',
+                        activation=tf.nn.relu,
+                        use_bias=False,
+                        name='conv1_E'
+                    )
                     conv1_B = tf.tensordot(conv1_BB, tf.ones(7, tf.float32),
                                            axes=[[3], [0]], name='conv1_B')
 
-                    conv1 = tf.add(tf.add(conv1_A, conv1_C), conv1_B, name='conv1')
+                    conv1 = tf.add(conv1_A + conv1_C + conv1_D + conv1_E, conv1_B, name='conv1')
 
                     conv2 = tf.layers.conv2d(
                         inputs=conv1,
@@ -171,8 +191,8 @@ class DQN(Agent):
                 q_value = out
                 return q_value
 
-        input_layer = tf.placeholder(tf.float32, [None, 8, 8, 9], name='s')
-        input_layer_ = tf.placeholder(tf.float32, [None, 8, 8, 9], name='s_')
+        input_layer = tf.placeholder(tf.float32, [None, 8, 8, 11], name='s')
+        input_layer_ = tf.placeholder(tf.float32, [None, 8, 8, 11], name='s_')
         action_input = tf.placeholder(tf.int32, [None,], name='a')
         reward_input = tf.placeholder(tf.float32, [None], name='r')
         self.s = input_layer
@@ -216,12 +236,12 @@ class DQN(Agent):
 
     def perceive(self, state, action, reward, next_state, done):
         ### Permutation on state and next_state
-        _ind = [0]+list(np.random.permutation([1,2,3,4,5,6,7]))+[8]
-        state_p = np.swapaxes(np.swapaxes(state, 0, 2)[_ind], 0, 2)
-        next_state_p = np.swapaxes(np.swapaxes(next_state, 0, 2)[_ind], 0, 2)
+        #_ind = [0]+list(np.random.permutation([1,2,3,4,5,6,7]))+[8]
+        #state_p = np.swapaxes(np.swapaxes(state, 0, 2)[_ind], 0, 2)
+        #next_state_p = np.swapaxes(np.swapaxes(next_state, 0, 2)[_ind], 0, 2)
         ### Permutation finished
 
-        self.replay_buffer.append((state_p, action, reward, next_state_p, done))
+        self.replay_buffer.append((state, action, reward, next_state, done))
         if len(self.replay_buffer) > self.memory_size:
             self.replay_buffer.popleft()
 
@@ -344,9 +364,14 @@ def check_board(prediction):
 
 def default_solution(prediction):
     solution = []
+    p = prediction.copy()
+    for idx, v in enumerate(p):
+        if 9 <= v and v <= 15:
+            p[idx] -= 8
+        elif v >= 16:
+            p[idx] -= 15
     for idx, action in enumerate(action_space):
         a, b, c = action
-        p = prediction
         if c == 'H':
             row1, row2 = a, a
             col1, col2 = b, b + 1
@@ -456,8 +481,8 @@ if __name__ == '__main__':
 
             action, q_values, flag_greedy = agent.greedy_action(state)
 
-            #if ((flag_greedy and random.random() < 0.6) or total_reward < 2):
-            #    action = default_solution(_state.prediction)
+            if ((flag_greedy and random.random() < 0.6) or total_reward < 2):
+                action = default_solution(BejeweledState.one_hot_state_to_prediction(state))
 
             next_state, reward, done = env.step(action, wait=1.3)
             total_reward += reward
@@ -478,7 +503,7 @@ if __name__ == '__main__':
             # _ = env.last_image # get sprite img
 
             # one hot state to predictions
-            p = np.tensordot(range(9), next_state, axes=([0], [2])).reshape((64, ))
+            p = BejeweledState.one_hot_state_to_prediction(next_state)
 
             if np.count_nonzero(p == 0) > 30:
                 print("No detection, sleep for 4 seconds.")
@@ -493,7 +518,9 @@ if __name__ == '__main__':
             else:
                 wait_round = 0
 
-            if total_reward > 2:
+            if total_reward > 1:
+                if reward == 0:
+                    reward = -0.1
                 agent.perceive(state, action, reward, next_state, done)
             state = next_state
             if done:

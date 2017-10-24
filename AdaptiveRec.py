@@ -92,16 +92,16 @@ def collect(path = "./img_data/"):
                 and (file.endswith("-data.jpg") or file.endswith("-label.npy"))]
     prefixes = set(file.replace("-data.jpg", "").replace("-label.npy", "") for file in files)
 
-    for prefix in prefixes:
+    for idx, prefix in enumerate(prefixes):
         try:
             img_file = cv2.imread(path + prefix + "-data.jpg")
             img_label = np.load(path + prefix + '-label.npy')
             np_image_data = np.asarray(img_file)
 
-            if np.sum(img_label) > 0:
+            if np.sum(img_label > 8) > 0:
                 continue
 
-            print('processing', prefix)
+            print('processing {} ({}/{})'.format(prefix, idx, len(prefixes)) )
             tag = Tagging(np_image_data)
             tag.tag(np_image_data, prefix)
 

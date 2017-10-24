@@ -19,11 +19,20 @@ class SpriteConvnetModel:
         self.graph = None
         self.open()
         self.variable_average = None
+        self.LABEL_NUM = 23
+
         with self.graph.as_default(), self.sess as sess:
             self.get_network(reuse, is_training)
 
         self.config = config
         self.config.learning_base = 1e-4
+
+        # 0      -> null
+        # 1-7    -> normal
+        # 9->15  -> fire (+8)
+        # 16->22 -> cross (+15)
+        # 8     -> special
+
 
 
     def get_network(self, reuse=False, is_training=False):
@@ -102,7 +111,7 @@ class SpriteConvnetModel:
                 # Logits layer
                 # Input Tensor Shape: [batch_size, 256]
                 # Output Tensor Shape: [batch_size, 8]
-                logits = tf.layers.dense(inputs=dense, units=9)
+                logits = tf.layers.dense(inputs=dense, units=self.LABEL_NUM)
 
             with tf.variable_scope("predictions"):
                 probabilities = tf.nn.softmax(logits, name="softmax_tensor")
@@ -110,7 +119,7 @@ class SpriteConvnetModel:
                 predictions = tf.argmax(input=logits, axis=1)
 
             # Calculate Loss (for both TRAIN and EVAL modes)
-            onehot_labels = tf.one_hot(indices=tf.cast(labels, tf.int32), depth=9)
+            onehot_labels = tf.one_hot(indices=tf.cast(labels, tf.int32), depth=self.LABEL_NUM)
             loss = tf.losses.softmax_cross_entropy(
                     onehot_labels=onehot_labels, logits=logits)
 
@@ -192,7 +201,7 @@ class SpriteConvnetModel:
             #                              capacity=64000, min_after_dequeue=10240, enqueue_many=True)
             x = 0
             batch_loss = 0
-            for t in range(10000):
+            for t in range(3002):
                 if (x+1)*64 > labels.shape[0]:
                     x = 0
                 if x == 0:
