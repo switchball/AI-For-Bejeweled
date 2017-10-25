@@ -57,7 +57,7 @@ class DQN(Agent):
         self.time_step = 0
         self.action_dim = 2*7*8+1
 
-        self.checkpointDir = './model/dqn_model/'
+        self.checkpointDir = './model/policy_gradient_model/'
 
         self.create_Q_network()
         self.create_training_method()
@@ -91,7 +91,7 @@ class DQN(Agent):
             print('Could not load replay buffer:', name)
 
     def create_Q_network(self):
-        def build_layers(input_layer, c_name, filter_num=16, fc_num=1024):
+        def build_layers(input_layer, c_name, filter_num=16, fc_num=1024, build_policy=False):
             with tf.variable_scope(c_name, reuse=False):
                 with tf.variable_scope('Conv'):
                     part_A = tf.slice(input_layer, [0, 0, 0, 0], [-1, 8, 8, 1])
@@ -163,7 +163,9 @@ class DQN(Agent):
                     conv_flat = tf.reshape(conv2, [-1, 4 * 4 * 64])
                     conv_flat = tf.nn.dropout(conv_flat, keep_prob=self.keep_prob)
 
-
+                if build_policy:
+                    self.all_act = tf.layers.dense(conv_flat, units=self.n_actions, name='act_all')
+                    self.all_act_prob = tf.nn.softmax(self.all_act, name='act_prob')  # use softmax to convert to probability
 
                 if self.dueling:
                     # Dueling DQN
@@ -208,8 +210,8 @@ class DQN(Agent):
         filter_num = 32
         fc_num = 1024
 
-        self.q_value = build_layers(input_layer, 'eval_dqn', fc_num=0)
-        self.q_next = build_layers(input_layer_, 'target_dqn', fc_num=0)
+        self.q_value = build_layers(input_layer, 'eval_dqn', fc_num=0, build_policy=True)
+        self.q_next = build_layers(input_layer_, 'target_dqn', fc_num=0, build_policy=False)
 
     def create_training_method(self):
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
@@ -225,12 +227,18 @@ class DQN(Agent):
             self.q_target = tf.stop_gradient(q_target)
         with tf.variable_scope('q_eval'):
             a_indices = tf.stack([tf.range(tf.shape(self.a)[0], dtype=tf.int32), self.a], axis=1)
-            print(self.q_value)
-            print(a_indices)
-            print(self.a)
             self.q_eval_wrt_a = tf.gather_nd(params=self.q_value, indices=a_indices)  # shape=(None, )
         with tf.variable_scope('loss'):
-            self.loss = tf.reduce_mean(tf.squared_difference(self.q_target, self.q_eval_wrt_a, name='TD_error'))
+            if False: # use q learning loss
+                self.loss = tf.reduce_mean(tf.squared_difference(self.q_target, self.q_eval_wrt_a, name='TD_error'))
+            if True: # use policy gradient
+                # to maximize total reward (log_p * R) is to minimize -(log_p * R), and the tf only have minimize(loss)
+                neg_log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.all_act,
+                                                                           labels=self.a)  # this is negative log of chosen action
+                # or in this way:
+                # neg_log_prob = tf.reduce_sum(-tf.log(self.all_act_prob)*tf.one_hot(self.tf_acts, self.n_actions), axis=1)
+                self.loss = tf.reduce_mean(neg_log_prob * self.r)  # reward guided loss
+
         with tf.variable_scope('train'):
             self._train_op = tf.train.RMSPropOptimizer(self.lr).minimize(self.loss, global_step=self.global_step)
 
@@ -307,15 +315,23 @@ class DQN(Agent):
             return ks, bs
 
     def greedy_action(self, state):
-        Q_value = self.q_value.eval(session=self.session, feed_dict={
+        #Q_value = self.q_value.eval(session=self.session, feed_dict={
+        #    self.s: [state],
+        #    self.keep_prob: 1.0
+        #})[0]
+
+        prob_weights = self.all_act_prob.eval(session=self.session, feed_dict={
             self.s: [state],
             self.keep_prob: 1.0
         })[0]
 
+
         if random.random() <= self.epsilon:
-            return np.argmax(Q_value), Q_value, 0
+            action = np.random.choice(range(prob_weights.shape[0]),
+                                      p=prob_weights.ravel())  # select action w.r.t the actions prob
+            return action, prob_weights, 0
         else:
-            return random.randint(0, self.action_dim - 1), Q_value, 1
+            return random.randint(0, self.action_dim - 1), prob_weights, 1
 
     def action(self, state):
         Q_value = self.q_value.eval(session=self.session, feed_dict={
@@ -490,7 +506,7 @@ if __name__ == '__main__':
         for step in range(STEP_NUM):
             result = env.render(show=False)
 
-            action, q_values, flag_greedy = agent.greedy_action(state)
+            action, prob_values, flag_greedy = agent.greedy_action(state)
 
             if ((flag_greedy and random.random() < 0.6) or total_reward < 2):
                 action = default_solution(BejeweledState.one_hot_state_to_prediction(state))
@@ -501,13 +517,13 @@ if __name__ == '__main__':
             #      format(episode, step, BejeweledAction().action_space[action], reward, flag_greedy, agent.epsilon))
 
             # render before
-            tag(result, q_values, action, reward, action_space)
+            tag(result, prob_values, action, reward, action_space)
 
             #conv = agent.eval_conv_result(state)
             #tag_conv(conv)
 
-            k_v, b_v = agent.eval_kernel_result()
-            tag_kernel(k_v, b_v)
+            #k_v, b_v = agent.eval_kernel_result()
+            #tag_kernel(k_v, b_v)
 
             #AR.append(env.last_image, _state.prediction)
             #AR.show()
