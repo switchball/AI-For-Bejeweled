@@ -17,6 +17,7 @@ from PIL import ImageGrab
 import win32con
 
 from itertools import product, tee
+from collections import deque
 
 from SpriteConvnetModel import SpriteConvnetModel, tf_flags
 from ROISelector import selectROI
@@ -44,6 +45,7 @@ class BejeweledState():
         a = np.zeros((8,8,BejeweledState.TYPE_NUM))
         for idx, p in enumerate(prediction):
             i, j = int(idx/8), idx%8
+            p = int(p)
             if p <= 8:
                 a[i,j,p] = 1
             elif 9 <= p and p <= 15:
@@ -67,6 +69,23 @@ class BejeweledAction():
     def random_action(self):
         return self.action_space[np.random.randint(len(self.action_space))]
 
+    @staticmethod
+    def matrix6():
+        mat = np.zeros((6, 6, 13, 2*8*7+1), dtype=np.float32)
+        for i in range(6):
+            for j in range(6):
+                # H => 6: (i+{0,1,2},j+{0,1})
+                # V => 6: (j+{0,1,2},i+{0,1})
+                for idx, (delta_i, delta_j) in enumerate(((0,0), (0,1), (1,0), (1,1), (2,0), (2,1))):
+                    x = i + delta_i
+                    y = j + delta_j
+                    mat[i, j, idx, (x*7+y)*2] = 1
+                    x = j + delta_i
+                    y = i + delta_j
+                    mat[i, j, idx+6, (x*7+y)*2+1] = 1
+                mat[i, j, 12, 2*7*8] = 1
+        return mat
+
 
 class BejeweledEnvironment(Environment):
     def __init__(self, ratio=1.25):
@@ -80,6 +99,9 @@ class BejeweledEnvironment(Environment):
         self.force_front_flag = True
         self.recognize_digit = True
         self.action_space = BejeweledAction().action_space
+        self._state_queue = deque()
+        for _ in range(4):
+            self._state_queue.append(BejeweledState(np.zeros(64)).state)
 
         # generator flow
         gen1, gen2 = tee(self.gen_screen_image(), 2)
@@ -171,7 +193,7 @@ class BejeweledEnvironment(Environment):
     def render(self, show=True):
         duration = int(1000*(time.time() - self.render_timestamp))
         zero_img = np.zeros(self.last_image.shape, np.uint8)
-        result = Tagging.attach(zero_img, BejeweledState.one_hot_state_to_prediction(self.last_state))
+        result = Tagging.attach(zero_img, BejeweledState.one_hot_state_to_prediction(self._state_queue[0]))
 
         cv2.putText(result, '%s ms' % duration, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (100, 100, 100), 3)
         if show:
@@ -193,6 +215,9 @@ class BejeweledEnvironment(Environment):
             predictions = next(self.prediction_iterator)
             digits = self.digit_iterator.__next__()
             predictions = BejeweledState(predictions).state # Package the predictions
+            self._state_queue.appendleft(predictions)
+            if len(self._state_queue) > 4:
+                self._state_queue.pop()
             self.last_state = predictions
             self.last_score = digits
             yield predictions, digits

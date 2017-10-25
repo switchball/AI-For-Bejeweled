@@ -55,7 +55,7 @@ class DQN(Agent):
         self.replay_buffer = deque()
         self.load_replay()
         self.time_step = 0
-        self.action_dim = 2*7*8 + 1
+        self.action_dim = 2*7*8+1
 
         self.checkpointDir = './model/dqn_model/'
 
@@ -91,7 +91,7 @@ class DQN(Agent):
             print('Could not load replay buffer:', name)
 
     def create_Q_network(self):
-        def build_layers(input_layer, c_name, filter_num=32, fc_num=1024):
+        def build_layers(input_layer, c_name, filter_num=16, fc_num=1024):
             with tf.variable_scope(c_name, reuse=False):
                 with tf.variable_scope('Conv'):
                     part_A = tf.slice(input_layer, [0, 0, 0, 0], [-1, 8, 8, 1])
@@ -161,6 +161,9 @@ class DQN(Agent):
 
                     # conv_flat = tf.reshape(conv1, [-1, 6 * 6 * filter_num])
                     conv_flat = tf.reshape(conv2, [-1, 4 * 4 * 64])
+                    conv_flat = tf.nn.dropout(conv_flat, keep_prob=self.keep_prob)
+
+
 
                 if self.dueling:
                     # Dueling DQN
@@ -200,6 +203,8 @@ class DQN(Agent):
         self.a = action_input
         self.r = reward_input
 
+        self.keep_prob = tf.placeholder(tf.float32, name='keep_prob')
+
         filter_num = 32
         fc_num = 1024
 
@@ -220,6 +225,9 @@ class DQN(Agent):
             self.q_target = tf.stop_gradient(q_target)
         with tf.variable_scope('q_eval'):
             a_indices = tf.stack([tf.range(tf.shape(self.a)[0], dtype=tf.int32), self.a], axis=1)
+            print(self.q_value)
+            print(a_indices)
+            print(self.a)
             self.q_eval_wrt_a = tf.gather_nd(params=self.q_value, indices=a_indices)  # shape=(None, )
         with tf.variable_scope('loss'):
             self.loss = tf.reduce_mean(tf.squared_difference(self.q_target, self.q_eval_wrt_a, name='TD_error'))
@@ -275,7 +283,8 @@ class DQN(Agent):
             self.s: state_batch,
             self.a: action_batch,
             self.r: reward_batch,
-            self.s_: next_state_batch
+            self.s_: next_state_batch,
+            self.keep_prob: 0.6
         })
 
         self.learn_step_counter += 1
@@ -291,15 +300,16 @@ class DQN(Agent):
         return v
 
     def eval_kernel_result(self):
-        with tf.variable_scope('dqn', reuse=True):
-            kernel = tf.get_variable('conv1_BB/kernel')
-            bias = tf.get_variable('conv1_BB/bias')
+        with tf.variable_scope('eval_dqn', reuse=True):
+            kernel = tf.get_variable('Conv/conv1_BB/kernel')
+            bias = tf.get_variable('Conv/conv1_BB/bias')
             ks, bs = self.session.run([tf.squeeze(kernel), bias])
             return ks, bs
 
     def greedy_action(self, state):
         Q_value = self.q_value.eval(session=self.session, feed_dict={
-            self.s: [state]
+            self.s: [state],
+            self.keep_prob: 1.0
         })[0]
 
         if random.random() <= self.epsilon:
@@ -309,7 +319,8 @@ class DQN(Agent):
 
     def action(self, state):
         Q_value = self.q_value.eval(session=self.session, feed_dict={
-            self.s: [state]
+            self.s: [state],
+            self.keep_prob: 1.0
         })[0]
         return np.argmax(Q_value)
 
@@ -495,8 +506,8 @@ if __name__ == '__main__':
             #conv = agent.eval_conv_result(state)
             #tag_conv(conv)
 
-            #k_v, b_v = agent.eval_kernel_result()
-            #tag_kernel(k_v, b_v)
+            k_v, b_v = agent.eval_kernel_result()
+            tag_kernel(k_v, b_v)
 
             #AR.append(env.last_image, _state.prediction)
             #AR.show()
