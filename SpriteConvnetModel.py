@@ -21,8 +21,11 @@ class SpriteConvnetModel:
         self.variable_average = None
         self.LABEL_NUM = 23
 
-        with self.graph.as_default(), self.sess as sess:
-            self.get_network(reuse, is_training)
+        #with self.graph.as_default(), self.sess as sess:
+        self.get_network(reuse, is_training)
+
+        self.sess = tf.Session(graph=self.predictions.graph)
+        self.sess.run(tf.global_variables_initializer())
 
         self.config = config
         self.config.learning_base = 1e-4
@@ -32,8 +35,6 @@ class SpriteConvnetModel:
         # 9->15  -> fire (+8)
         # 16->22 -> cross (+15)
         # 8     -> special
-
-
 
     def get_network(self, reuse=False, is_training=False):
         """Model function for CNN."""
@@ -134,9 +135,6 @@ class SpriteConvnetModel:
                     loss=loss,
                     global_step=tf.train.get_global_step())
 
-
-
-
         self.logits = logits
         self.predictions = predictions
         self.loss = loss
@@ -192,7 +190,7 @@ class SpriteConvnetModel:
                 print("[Train Prepare] Model " + ckpt.model_checkpoint_path + " restored.")
 
     def train(self, features, labels):
-        with self.open() as sess:
+        with self.sess as sess:
             sess.run(tf.global_variables_initializer())
             saver = tf.train.Saver()
             global_step = [var for var in tf.global_variables() if var.op.name=="global_step"][0]
@@ -225,38 +223,27 @@ class SpriteConvnetModel:
 
         return None
 
-    def predictor(self, gen):
-        print("[Predictor] Session start " + repr(gen))
-        with self.open() as sess:
-            test_writer = tf.summary.FileWriter(self.config.checkpointDir + 'test', sess.graph)
+    def predict_prepare(self):
+        test_writer = tf.summary.FileWriter(self.config.checkpointDir + 'test', self.sess.graph)
 
-            if self.variable_average is None:
-                variable_averages = tf.train.ExponentialMovingAverage(self.config.moving_average_decay)
-            else:
-                variable_averages = self.variable_average
-            variables_to_restore = variable_averages.variables_to_restore()
-            saver = tf.train.Saver(variables_to_restore)
-            sess.run(tf.local_variables_initializer())
+        if self.variable_average is None:
+            variable_averages = tf.train.ExponentialMovingAverage(self.config.moving_average_decay)
+        else:
+            variable_averages = self.variable_average
+        variables_to_restore = variable_averages.variables_to_restore()
+        saver = tf.train.Saver(variables_to_restore)
+        self.sess.run(tf.local_variables_initializer())
 
-            # restore
-            ckpt = tf.train.get_checkpoint_state(self.config.checkpointDir)
-            saver.restore(sess, ckpt.model_checkpoint_path)
-            print("[Predict Prepare] Model " + ckpt.model_checkpoint_path + " restored.")
+        # restore
+        ckpt = tf.train.get_checkpoint_state(self.config.checkpointDir)
+        saver.restore(self.sess, ckpt.model_checkpoint_path)
+        print("[Predict Prepare] Model " + ckpt.model_checkpoint_path + " restored.")
 
-            # predict
-            for features in gen:
-                preds = sess.run(self.predictions, feed_dict={
-                    self.x_input: features
-                })
-                yield preds
-        print("[Predictor] Session closed.")
 
     def predict(self, features):
-        with self.open() as sess:
-            sess.run(tf.global_variables_initializer())
-            preds = sess.run(self.predictions, feed_dict={
-                self.x_input: features
-            })
+        preds = self.sess.run(self.predictions, feed_dict={
+            self.x_input: features
+        })
         return preds # self.predictions.eval({self.x_input: features})
 
     def predict_and_eval(self, features, labels):
@@ -476,8 +463,12 @@ def main():
     print(dict(zip(unique, counts)))
 
     model = SpriteConvnetModel(FLAGS, False, True)
-    model.train_prepare(restore_model=False)
-    model.train(features, labels)
+    #model.train_prepare(restore_model=False)
+    #model.train(features, labels)
+
+    model.predict_prepare()
+    model.predict(features)
+    exit(0)
 
     model2= SpriteConvnetModel(FLAGS, False, False)
     gen2 = model2.predictor(gen_repeat())

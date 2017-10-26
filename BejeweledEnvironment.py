@@ -103,21 +103,13 @@ class BejeweledEnvironment(Environment):
         for _ in range(4):
             self._state_queue.append(BejeweledState(np.zeros(64)).state)
 
-        # generator flow
-        gen1, gen2 = tee(self.gen_screen_image(), 2)
-        sprite_feature_iterator = self.gen_sprite_roi_data(gen1)
-        self.digit_iterator = self.gen_digit(gen2)
-
-        model = SpriteConvnetModel(tf_flags(), False, False)
-        self.prediction_iterator = model.predictor(sprite_feature_iterator)
-
-        self.state_iterator = self.gen_state()
-        self.state_iterator.send(None)
-
         # state store
         self.last_image = None
         self.last_state = None
         self.last_score = 0
+
+        self.state_iterator = self.gen_state()
+        self.state_iterator.send(None)
 
         # others
         self.render_timestamp = time.time()
@@ -145,12 +137,8 @@ class BejeweledEnvironment(Environment):
         time.sleep(3)
 
         # do reset step
-        self.prediction_iterator.send(None)
-        self.digit_iterator.send(0)
         ret = self.get_initial_state()
 
-        # hack digit
-        self.last_score = 0
         return ret
 
     def step(self, action, wait=0):
@@ -180,13 +168,18 @@ class BejeweledEnvironment(Environment):
         # capture next state after wait
         cached_digits = self.last_score
         predictions, digits = next(self.state_iterator)
+        self.last_score = digits
         reward = 0
         if cached_digits:
             reward = digits - cached_digits
         if reward < 0:
             reward = 0
-        if reward >= 5:
-            reward = 5
+        if reward >= 10:
+            reward = 10
+        #if reward > 0:
+        #    print("[GOT REWARD]", int(reward*100))
+        if reward == 0:
+            reward = -0.1
         # print("Step Action: {}, Reward: {} ({} -> {})".format(action, reward, cached_digits, digits))
         return predictions, reward, False
 
@@ -211,71 +204,84 @@ class BejeweledEnvironment(Environment):
     def gen_state(self):
         #self.prediction_iterator.send(None)
         #self.digit_iterator.send(None)
+        model = SpriteConvnetModel(tf_flags(), False, False)
+        model.predict_prepare()
+        _last_score = 0
+        _last_pred = [0] * 64
         while True:
-            predictions = next(self.prediction_iterator)
-            digits = self.digit_iterator.__next__()
+            img = self.get_screen_image()
+            sprite_feature = self.get_sprite_roi_data(img)
+
+            digits = self.get_digit(img, min_score=_last_score)
+            predictions = model.predict(sprite_feature)
+
+            # if score updates, ignore this frame
+            if _last_score < digits:
+                #print("[SCORE]{} -> {}".format(int(_last_score*100), int(digits*100)))
+                _last_score = digits
+                _last_pred = predictions
+                continue
+            else:
+                pass
+
+            # if prediction updates, ignore this frame
+            if np.count_nonzero(np.array(predictions-_last_pred)) > 0:
+                _last_pred = predictions
+                continue
+            else:
+                pass
+
             predictions = BejeweledState(predictions).state # Package the predictions
+
             self._state_queue.appendleft(predictions)
             if len(self._state_queue) > 4:
                 self._state_queue.pop()
             self.last_state = predictions
-            self.last_score = digits
             yield predictions, digits
 
-    def gen_screen_image(self):
-        img = True
-        while img is not None:
-            ts = time.time()
-            img = self.grab_screen(delay=0.01, force_front=self.force_front_flag)
-            d = int((time.time() - ts) * 1000)
-            # print("Grab time:", d, 'ms.')
-            yield img
-        # if img is None, should stop iteration
+    def get_screen_image(self):
+        # ts = time.time()
+        img = self.grab_screen(delay=0.01, force_front=self.force_front_flag)
+        # d = int((time.time() - ts) * 1000)
+        # print("Grab time:", d, 'ms.')
+        return img
 
-    def gen_sprite_roi_data(self, image_iterator):
-        for image in image_iterator:
-            ts = time.time()
-            img = selectROI(image, ratio=self.SPRITE_RATIO)
-            self.last_image = img
-            data = img_crop_to_array(img)
-            d = int((time.time() - ts) * 1000)
-            # print("Predict time:", d, 'ms.')
-            yield data
+    def get_sprite_roi_data(self, image):
+        # ts = time.time()
+        img = selectROI(image, ratio=self.SPRITE_RATIO)
+        self.last_image = img
+        data = img_crop_to_array(img)
+        # d = int((time.time() - ts) * 1000)
+        # print("Predict time:", d, 'ms.')
+        return data
 
-    def gen_digit(self, image_iterator):
-        score = 0
-        last_score = 0
-        for image in image_iterator:
-            if self.recognize_digit:
-                import pyocr
-                import pyocr.tesseract as tess
-                import pyocr.builders
-                from PIL import Image
+    def get_digit(self, image, min_score):
+        if self.recognize_digit:
+            import pyocr
+            import pyocr.tesseract as tess
+            import pyocr.builders
+            from PIL import Image
 
-                digit_ratio = (0.1016, 0.1836, 0.2228, 0.2268)
-                digits = selectROI(image, ratio=digit_ratio, round8=False)
-                bw_img = digits
-                cv2.imwrite('digit_sample.jpg', bw_img)
-                txt = tess.image_to_string(
-                    Image.fromarray(bw_img),
-                    lang='eng',
-                    builder=pyocr.builders.TextBuilder()
-                )
-                txt = txt.replace(',','').replace('.','')
-                if last_score is not None:
-                    #print('trigger')
-                    score = last_score
-                last_score = score
-                if txt.isdigit() and int(txt) >= last_score: # reward should not decrease
-                    score = int(txt) / 200.0
-                else:
-                    score = last_score
-                # print("TXT:", txt, 'score:', score , 'last_score:', last_score)
-                # scale score
-
-                last_score = yield score
+            digit_ratio = (0.1016, 0.1836, 0.2228, 0.2268)
+            digits = selectROI(image, ratio=digit_ratio, round8=False)
+            bw_img = digits
+            cv2.imwrite('digit_sample.jpg', bw_img)
+            txt = tess.image_to_string(
+                Image.fromarray(bw_img),
+                lang='eng',
+                builder=pyocr.builders.TextBuilder()
+            )
+            txt = txt.replace(',','').replace('.','')
+            if txt.isdigit() and int(txt) >= min_score: # reward should not decrease
+                score = int(txt) / 100.0
             else:
-                yield 0
+                score = min_score
+            # print("TXT:", txt, 'score:', score , 'last_score:', last_score)
+            # scale score
+
+            return score
+        else:
+            return 0
 
     def get_screen_resolution(self):
         width = win32api.GetSystemMetrics(0)

@@ -57,10 +57,11 @@ class DQN(Agent):
         self.time_step = 0
         self.action_dim = 2*7*8+1
 
-        self.checkpointDir = './model/policy_gradient_model/'
+        self.checkpointDir = './model/dqn_model/'
 
         self.create_Q_network()
         self.create_training_method()
+
 
         t_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='target_net')
         e_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='eval_net')
@@ -73,6 +74,9 @@ class DQN(Agent):
         init = tf.global_variables_initializer()
         self.session = tf.Session(graph=self.q_value.graph)
         self.session.run(init)
+
+        self.summary = self.create_summary()
+        self.train_writer = tf.summary.FileWriter(self.checkpointDir + 'train', self.session.graph)
 
         if output_graph:
             # $ tensorboard --logdir=logs
@@ -210,7 +214,7 @@ class DQN(Agent):
         filter_num = 32
         fc_num = 1024
 
-        self.q_value = build_layers(input_layer, 'eval_dqn', fc_num=0, build_policy=True)
+        self.q_value = build_layers(input_layer, 'eval_dqn', fc_num=0, build_policy=False)
         self.q_next = build_layers(input_layer_, 'target_dqn', fc_num=0, build_policy=False)
 
     def create_training_method(self):
@@ -229,9 +233,9 @@ class DQN(Agent):
             a_indices = tf.stack([tf.range(tf.shape(self.a)[0], dtype=tf.int32), self.a], axis=1)
             self.q_eval_wrt_a = tf.gather_nd(params=self.q_value, indices=a_indices)  # shape=(None, )
         with tf.variable_scope('loss'):
-            if False: # use q learning loss
+            if True: # use q learning loss
                 self.loss = tf.reduce_mean(tf.squared_difference(self.q_target, self.q_eval_wrt_a, name='TD_error'))
-            if True: # use policy gradient
+            if False: # use policy gradient
                 # to maximize total reward (log_p * R) is to minimize -(log_p * R), and the tf only have minimize(loss)
                 neg_log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.all_act,
                                                                            labels=self.a)  # this is negative log of chosen action
@@ -241,6 +245,28 @@ class DQN(Agent):
 
         with tf.variable_scope('train'):
             self._train_op = tf.train.RMSPropOptimizer(self.lr).minimize(self.loss, global_step=self.global_step)
+
+    def create_summary(self):
+        tvars = self.loss.graph.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
+        tvars = tf.trainable_variables()
+        grads = tf.gradients(self.loss, tvars)
+
+        grad_summaries = []
+        for g, v in zip(grads,tvars):
+            if g is None:
+                continue
+            else:
+                print(g, v)
+            grad_hist_summary = tf.summary.histogram("{}/grad/hist".format(v.name), g)
+            sparsity_summary = tf.summary.histogram("{}/variable/hist".format(v.name), v)
+            grad_summaries.append(grad_hist_summary)
+            grad_summaries.append(sparsity_summary)
+        grad_summaries.append(tf.summary.histogram('q_value_histogram', self.q_value))
+        grad_summaries.append(tf.summary.scalar('loss', self.loss))
+        grad_summaries.append(tf.summary.scalar('max_qv', tf.reduce_max(self.q_value) ))
+        grad_summaries.append(tf.summary.scalar('target_qv', tf.reduce_max(self.q_next) ))
+        grad_summaries_merged = tf.summary.merge(grad_summaries)
+        return grad_summaries_merged
 
     def restore_model(self):
         ckpt = tf.train.get_checkpoint_state(self.checkpointDir)
@@ -264,7 +290,7 @@ class DQN(Agent):
         if len(self.replay_buffer) > self.batch_size:
             self.train_Q_network()
 
-        if len(self.replay_buffer) % 20 == 0:
+        if len(self.replay_buffer) % 50 == 0:
             with open('replay.dat', 'wb') as f:
                 pickle.dump(self.replay_buffer, f, True)
                 print("Replay save. ", len(self.replay_buffer))
@@ -287,13 +313,20 @@ class DQN(Agent):
         next_state_batch = [data[3] for data in mini_batch]
 
         # Step 3: optimize (ignore done, assume done=False)
-        _, loss = self.session.run([self._train_op, self.loss], feed_dict={
+        feed_dict = {
             self.s: state_batch,
             self.a: action_batch,
             self.r: reward_batch,
             self.s_: next_state_batch,
             self.keep_prob: 0.6
-        })
+        }
+        if (self.learn_step_counter+1) % 10 == 0:
+            _, loss, summary = self.session.run([self._train_op, self.loss, self.summary], feed_dict=feed_dict)
+            self.train_writer.add_summary(summary, self.learn_step_counter+1)
+            print('Adding run metadata for', self.learn_step_counter+1)
+            self.train_writer.flush()
+        else:
+            _, loss = self.session.run([self._train_op, self.loss], feed_dict=feed_dict)
 
         self.learn_step_counter += 1
 
@@ -315,23 +348,24 @@ class DQN(Agent):
             return ks, bs
 
     def greedy_action(self, state):
-        #Q_value = self.q_value.eval(session=self.session, feed_dict={
-        #    self.s: [state],
-        #    self.keep_prob: 1.0
-        #})[0]
-
-        prob_weights = self.all_act_prob.eval(session=self.session, feed_dict={
+        Q_value = self.q_value.eval(session=self.session, feed_dict={
             self.s: [state],
             self.keep_prob: 1.0
         })[0]
 
+        #prob_weights = self.all_act_prob.eval(session=self.session, feed_dict={
+        #    self.s: [state],
+        #    self.keep_prob: 1.0
+        #})[0]
+
 
         if random.random() <= self.epsilon:
-            action = np.random.choice(range(prob_weights.shape[0]),
-                                      p=prob_weights.ravel())  # select action w.r.t the actions prob
-            return action, prob_weights, 0
+            return np.argmax(Q_value), Q_value, 0
+            #action = np.random.choice(range(prob_weights.shape[0]),
+            #                          p=prob_weights.ravel())  # select action w.r.t the actions prob
+            #return action, prob_weights, 0
         else:
-            return random.randint(0, self.action_dim - 1), prob_weights, 1
+            return random.randint(0, self.action_dim - 1), Q_value, 1
 
     def action(self, state):
         Q_value = self.q_value.eval(session=self.session, feed_dict={
@@ -350,8 +384,8 @@ def tag(img, q_values, action, reward, action_space):
     minimum = np.min(q_values)
     average = np.average(q_values)
     nonzero = np.count_nonzero(q_values==0)
-    print('qv, max={}, min={}, avg={}, #Zeros={}, action={}'.
-          format(maximum, minimum, average, nonzero, action_space[action]))
+    #print('qv, max={}, min={}, avg={}, #Zeros={}, action={}'.
+    #      format(maximum, minimum, average, nonzero, action_space[action]))
     for idx, qv in enumerate(q_values):
         a, b, c = action_space[idx]
         if c == 'H':
@@ -508,11 +542,15 @@ if __name__ == '__main__':
 
             action, prob_values, flag_greedy = agent.greedy_action(state)
 
-            if ((flag_greedy and random.random() < 0.6) or total_reward < 2):
+            if ((flag_greedy and random.random() < 0.1) or env.last_score < 5):
                 action = default_solution(BejeweledState.one_hot_state_to_prediction(state))
 
-            next_state, reward, done = env.step(action, wait=1.3)
+            next_state, reward, done = env.step(action, wait=0.2)
             total_reward += reward
+            #if reward > 0:
+            #    print("[GOT REWARD]", int(reward*100), '[TOTAL]', int(100*total_reward), '[ACTION]', action_space[action])
+            if total_reward < -100:
+                done = True
             #print("{}#{} Step Action: {}, Reward: {} Greedy: {} eps={}".
             #      format(episode, step, BejeweledAction().action_space[action], reward, flag_greedy, agent.epsilon))
 
@@ -535,7 +573,7 @@ if __name__ == '__main__':
             if np.count_nonzero(p == 0) > 30:
                 print("No detection, sleep for 4 seconds.")
                 time.sleep(4)
-                if wait_round > 2:
+                if wait_round > 1:
                     env.mouse_click_on_sprite(7, 2)
                     env.reset()
                     wait_round = 0
@@ -545,9 +583,7 @@ if __name__ == '__main__':
             else:
                 wait_round = 0
 
-            if total_reward > 1:
-                if reward == 0:
-                    reward = -0.1
+            if env.last_score >= 5:
                 agent.perceive(state, action, reward, next_state, done)
             state = next_state
             if done:
